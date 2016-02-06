@@ -36,7 +36,16 @@ public:
   static void createDevice() {
     _usbDevice = std::make_shared<MayaUsbDevice>();
     _usbDevice->waitHandshakeAsync([](bool success) {
-      _handshake.store(true);
+      if (success) {
+        _handshake.store(true);
+        _usbDevice->beginSendLoop([]{
+          cleanup();
+          MGlobal::displayError("Transfer error; USB device disconnected");
+        });
+      } else {
+        cleanup();
+        MGlobal::displayError("Handshake error; USB device disconnected");
+      }
     });
   }
   static std::shared_ptr<MayaUsbDevice> getDevice() { return _usbDevice; }
@@ -190,10 +199,17 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
     return;
   }
 
-  MHWRender::MTextureManager* textureManager = renderer->getTextureManager();
+  const MHWRender::MRenderTarget* colorTarget =
+      context.getCurrentColorRenderTarget();
+  if (colorTarget) {
+    MHWRender::MRenderTargetDescription desc;
+    colorTarget->targetDescription(desc);
+    std::cout << "  -> format " << desc.rasterFormat() << std::endl;
+    std::cout << "  -> " << desc.width() << "x" << desc.height() << std::endl;
+  }
+
   MHWRender::MTexture* colorTexture =
       context.copyCurrentColorRenderTargetToTexture();
-
   if (colorTexture) {
     int row, slice;
     void* rawData = colorTexture->rawData(row, slice);
@@ -201,7 +217,7 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
     if (MayaUsbStreamer::isHandshakeComplete()) {
       bool status = MayaUsbStreamer::getDevice()->sendDataSync(rawData, slice);
       if (status) {
-        std::cout << "  -> " << row << "/" << slice << std::endl;
+        std::cout << "  -> sent " << slice << std::endl;
       } else {
         MayaUsbStreamer::cleanup();
         MGlobal::displayError("Streaming error, USB device disconnected");
@@ -209,6 +225,8 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
     }
 
     MHWRender::MTexture::freeRawData(rawData);
+
+    MHWRender::MTextureManager* textureManager = renderer->getTextureManager();
     textureManager->releaseTexture(colorTexture);
   }
 }

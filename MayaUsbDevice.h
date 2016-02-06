@@ -7,6 +7,8 @@
 #include <functional>
 #include <atomic>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 
 class InterruptibleThread {
 public:
@@ -45,6 +47,7 @@ struct MayaUsbDeviceId {
 };
 
 class MayaUsbDevice {
+  static constexpr size_t MAX_IMAGE_SIZE = 1024 * 1024 * 10; // 1 MB.
   static constexpr size_t BUFFER_LEN = 16384;
 
   static libusb_context* _usb;
@@ -56,7 +59,11 @@ class MayaUsbDevice {
   uint8_t _inEndpoint;
   uint8_t _outEndpoint;
   std::shared_ptr<InterruptibleThread> _worker;
+  bool _syncRead;
   unsigned char* _syncReadBuffer;
+  size_t _syncReadBufferSize;
+  std::mutex _syncReadMutex;
+  std::condition_variable _syncReadCv;
 
   int16_t getControlInt16(uint8_t request);
   void sendControl(uint8_t request);
@@ -71,6 +78,7 @@ public:
   std::string getDescription();
   void convertToAccessory();
   bool waitHandshakeAsync(std::function<void(bool)> callback);
+  bool beginSendLoop(std::function<void()> failureCallback);
   bool sendDataSync(void* data, size_t bytes);
 
   static void initUsb();

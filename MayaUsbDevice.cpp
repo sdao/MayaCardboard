@@ -13,7 +13,8 @@ MayaUsbDevice::MayaUsbDevice(uint16_t vid, uint16_t pid)
 MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
     : _hnd(nullptr),
       _worker(nullptr),
-      _syncReadBuffer(new unsigned char[BUFFER_LEN]) {
+      _syncRead(false),
+      _syncReadBuffer(new unsigned char[MAX_IMAGE_SIZE]) {
   int status;
 
   for (const MayaUsbDeviceId& id : ids) {
@@ -229,25 +230,62 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
   return true;
 }
 
+bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
+  if (_outEndpoint == 0) {
+    return false;
+  }
+
+  _worker = std::make_shared<InterruptibleThread>(
+    [=](const InterruptibleThread::SharedAtomicBool cancel) {
+      while (true) {
+        std::unique_lock<std::mutex> lock(_syncReadMutex);
+        _syncReadCv.wait(lock, [&]{
+          return _syncRead || cancel->load();
+        });
+
+        _syncRead = false;
+        if (cancel->load()) {
+          return;
+        } else {
+          for (int i = 0; i < _syncReadBufferSize; i += BUFFER_LEN) {
+            int written = 0;
+            libusb_bulk_transfer(_hnd,
+                _outEndpoint,
+                _syncReadBuffer + i,
+                BUFFER_LEN,
+                &written,
+                500);
+
+            if (written < std::min(BUFFER_LEN, _syncReadBufferSize - i)) {
+              failureCallback();
+              return;
+            }
+          }
+        }
+      }
+      std::cout << "Send loop ended" << std::endl;
+    }
+  );
+
+  return true;
+}
+
 bool MayaUsbDevice::sendDataSync(void* data, size_t bytes) {
   if (_outEndpoint == 0) {
     return false;
   }
 
-  for (int i = 0; i < bytes; i += BUFFER_LEN) {
-    int available = std::min(BUFFER_LEN, bytes - i);
-    std::memcpy(_syncReadBuffer, data, available);
+  if (_syncReadMutex.try_lock()) {
+    std::cout << "$" << std::endl;
+    int bytesLimit = std::min(MAX_IMAGE_SIZE, bytes);
 
-    int written = 0;
-    libusb_bulk_transfer(_hnd,
-        _outEndpoint,
-        _syncReadBuffer,
-        BUFFER_LEN,
-        &written,
-        1000);
-    if (written < available) {
-      return false;
-    }
+    std::lock_guard<std::mutex> lock(_syncReadMutex, std::adopt_lock);
+    std::memcpy(_syncReadBuffer, data, bytesLimit);
+    _syncReadBufferSize = bytesLimit;
+    _syncRead = true;
+    _syncReadCv.notify_one();
+  } else {
+    std::cout << "#" << std::endl;
   }
 
   return true;
