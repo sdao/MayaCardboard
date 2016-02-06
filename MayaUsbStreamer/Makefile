@@ -66,8 +66,12 @@ clean_MayaUsbStreamer:
 Clean_MayaUsbStreamer:
 	-rm -f $(MayaUsbStreamer_MAKEFILE).bak $(MayaUsbStreamer_OBJECTS) $(MayaUsbStreamer_PLUGIN)
 
+install_MayaUsbStreamer: $(MayaUsbStreamer_PLUGIN)
+	cp $(MayaUsbStreamer_PLUGIN) ~/maya/plug-ins/
+
 
 plugins: $(MayaUsbStreamer_PLUGIN)
 depend:	 depend_MayaUsbStreamer
 clean:	 clean_MayaUsbStreamer
 Clean:	 Clean_MayaUsbStreamer
+install: install_MayaUsbStreamer
