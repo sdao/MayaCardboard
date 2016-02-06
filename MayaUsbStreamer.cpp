@@ -36,7 +36,7 @@ public:
   static void createDevice() {
     _usbDevice = std::make_shared<MayaUsbDevice>();
     _usbDevice->waitHandshakeAsync([](bool success) {
-      std::cout << "success=" << success << std::endl;
+      _handshake.store(true);
     });
   }
   static std::shared_ptr<MayaUsbDevice> getDevice() { return _usbDevice; }
@@ -198,7 +198,15 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
     int row, slice;
     void* rawData = colorTexture->rawData(row, slice);
 
-    std::cout << "  -> " << row << "/" << slice << std::endl;
+    if (MayaUsbStreamer::isHandshakeComplete()) {
+      bool status = MayaUsbStreamer::getDevice()->sendDataSync(rawData, slice);
+      if (status) {
+        std::cout << "  -> " << row << "/" << slice << std::endl;
+      } else {
+        MayaUsbStreamer::cleanup();
+        MGlobal::displayError("Streaming error, USB device disconnected");
+      }
+    }
 
     MHWRender::MTexture::freeRawData(rawData);
     textureManager->releaseTexture(colorTexture);

@@ -3,6 +3,7 @@
 #include <sstream>
 #include <iostream>
 #include <iomanip>
+#include <cstring>
 
 libusb_context* MayaUsbDevice::_usb(nullptr);
 
@@ -11,7 +12,8 @@ MayaUsbDevice::MayaUsbDevice(uint16_t vid, uint16_t pid)
 
 MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
     : _hnd(nullptr),
-      _worker(nullptr) {
+      _worker(nullptr),
+      _syncReadBuffer(new unsigned char[BUFFER_LEN]) {
   int status;
 
   for (const MayaUsbDeviceId& id : ids) {
@@ -89,6 +91,8 @@ MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
 }
 
 MayaUsbDevice::~MayaUsbDevice() {
+  delete[] _syncReadBuffer;
+
   if (_worker && !_worker->isCancelled()) {
     _worker->cancel();
     // Wait 1s since our loop checks every 500ms for cancel flag.
@@ -170,7 +174,7 @@ void MayaUsbDevice::convertToAccessory() {
   sendControlString(52, 0, "SiriusCybernetics");
 
   // Send model string.
-  sendControlString(52, 1, "UsbAccessory");
+  sendControlString(52, 1, "MayaUsb");
 
   // Send description.
   sendControlString(52, 2, "Maya USB streaming");
@@ -196,11 +200,13 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
   _worker = std::make_shared<InterruptibleThread>(
     [=](const InterruptibleThread::SharedAtomicBool cancel) {
       unsigned char* inputBuffer = new unsigned char[BUFFER_LEN];
+      int i = 0;
       int read = 0;
+      int status = LIBUSB_ERROR_TIMEOUT;
       bool cancelled;
-      while (!(cancelled = cancel->load())) {
-        std::cout << "Waiting..." << std::endl;
-        libusb_bulk_transfer(_hnd,
+      while (!(cancelled = cancel->load()) && status == LIBUSB_ERROR_TIMEOUT) {
+        std::cout << i++ << " Waiting..." << std::endl;
+        status = libusb_bulk_transfer(_hnd,
             _inEndpoint,
             inputBuffer,
             BUFFER_LEN,
@@ -215,8 +221,34 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
         std::cout << "Received handshake!" << std::endl;
         callback(read > 0);
       }
+
+      cancel->store(true);
     }
   );
+
+  return true;
+}
+
+bool MayaUsbDevice::sendDataSync(void* data, size_t bytes) {
+  if (_outEndpoint == 0) {
+    return false;
+  }
+
+  for (int i = 0; i < bytes; i += BUFFER_LEN) {
+    int available = std::min(BUFFER_LEN, bytes - i);
+    std::memcpy(_syncReadBuffer, data, available);
+
+    int written = 0;
+    libusb_bulk_transfer(_hnd,
+        _outEndpoint,
+        _syncReadBuffer,
+        BUFFER_LEN,
+        &written,
+        1000);
+    if (written < available) {
+      return false;
+    }
+  }
 
   return true;
 }

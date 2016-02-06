@@ -56,6 +56,7 @@ class MayaUsbDevice {
   uint8_t _inEndpoint;
   uint8_t _outEndpoint;
   std::shared_ptr<InterruptibleThread> _worker;
+  unsigned char* _syncReadBuffer;
 
   int16_t getControlInt16(uint8_t request);
   void sendControl(uint8_t request);
@@ -70,6 +71,7 @@ public:
   std::string getDescription();
   void convertToAccessory();
   bool waitHandshakeAsync(std::function<void(bool)> callback);
+  bool sendDataSync(void* data, size_t bytes);
 
   static void initUsb();
   static void exitUsb();
