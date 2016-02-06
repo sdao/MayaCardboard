@@ -1,4 +1,5 @@
 #include "MayaUsbDevice.h"
+#include <boost/endian/conversion.hpp>
 #include <stdexcept>
 #include <sstream>
 #include <iostream>
@@ -6,6 +7,7 @@
 #include <cstring>
 
 libusb_context* MayaUsbDevice::_usb(nullptr);
+tjhandle MayaUsbDevice::_jpegCompressor(nullptr);
 
 MayaUsbDevice::MayaUsbDevice(uint16_t vid, uint16_t pid)
     : MayaUsbDevice({ MayaUsbDeviceId(vid, pid) }) {}
@@ -13,8 +15,10 @@ MayaUsbDevice::MayaUsbDevice(uint16_t vid, uint16_t pid)
 MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
     : _hnd(nullptr),
       _worker(nullptr),
+      _handshake(false),
       _syncRead(false),
-      _syncReadBuffer(new unsigned char[MAX_IMAGE_SIZE]) {
+      _rgbImageBuffer(new unsigned char[RGB_IMAGE_SIZE]),
+      _jpegBuffer(nullptr) {
   int status;
 
   for (const MayaUsbDeviceId& id : ids) {
@@ -92,10 +96,14 @@ MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
 }
 
 MayaUsbDevice::~MayaUsbDevice() {
-  delete[] _syncReadBuffer;
+  delete[] _rgbImageBuffer;
+  if (_jpegBuffer != nullptr) {
+    tjFree(_jpegBuffer);
+  }
 
   if (_worker && !_worker->isCancelled()) {
     _worker->cancel();
+    _syncReadCv.notify_one();
     // Wait 1s since our loop checks every 500ms for cancel flag.
     std::this_thread::sleep_for(std::chrono::seconds(1));
     libusb_close(_hnd);
@@ -198,6 +206,10 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
     return false;
   }
 
+  if (_handshake.load()) {
+    return false;
+  }
+
   _worker = std::make_shared<InterruptibleThread>(
     [=](const InterruptibleThread::SharedAtomicBool cancel) {
       unsigned char* inputBuffer = new unsigned char[BUFFER_LEN];
@@ -219,8 +231,11 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
       if (cancelled) {
         std::cout << "Cancelled!" << std::endl;
       } else {
-        std::cout << "Received handshake!" << std::endl;
-        callback(read > 0);
+        bool success = read > 0;
+        std::cout << "Received handshake, success=" << success << std::endl;
+
+        _handshake.store(success);
+        callback(success);
       }
 
       cancel->store(true);
@@ -230,8 +245,16 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
   return true;
 }
 
+bool MayaUsbDevice::isHandshakeComplete() {
+  return _handshake.load();
+}
+
 bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
   if (_outEndpoint == 0) {
+    return false;
+  }
+
+  if (!_handshake.load()) {
     return false;
   }
 
@@ -243,25 +266,58 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
           return _syncRead || cancel->load();
         });
 
-        _syncRead = false;
         if (cancel->load()) {
+          int written = 0;
+
+          // Write 0 buffer size.
+          uint32_t bytes = 0;
+          libusb_bulk_transfer(_hnd,
+              _outEndpoint,
+              reinterpret_cast<unsigned char*>(&bytes),
+              4,
+              &written,
+              500);
+
+          // Ignore if written or not.
           return;
         } else {
-          for (int i = 0; i < _syncReadBufferSize; i += BUFFER_LEN) {
-            int written = 0;
+          int written = 0;
+
+          // Write size of JPEG (32-bit int).
+          uint32_t bytes = _jpegBufferSize;
+          bytes = boost::endian::native_to_big(bytes);
+          libusb_bulk_transfer(_hnd,
+              _outEndpoint,
+              reinterpret_cast<unsigned char*>(&bytes),
+              4,
+              &written,
+              500);
+          if (written < 4) {
+            failureCallback();
+            return;
+          }
+
+          // Write JPEG in BUFFER_LEN chunks.
+          for (int i = 0; i < _jpegBufferSize; i += BUFFER_LEN) {
+            written = 0;
+
+            int chunk = std::min(BUFFER_LEN, _jpegBufferSize - i);
             libusb_bulk_transfer(_hnd,
                 _outEndpoint,
-                _syncReadBuffer + i,
-                BUFFER_LEN,
+                _jpegBuffer + i,
+                chunk,
                 &written,
                 500);
 
-            if (written < std::min(BUFFER_LEN, _syncReadBufferSize - i)) {
+            if (written < chunk) {
               failureCallback();
               return;
             }
           }
         }
+
+        // Only reset send flag if successful.
+        _syncRead = false;
       }
       std::cout << "Send loop ended" << std::endl;
     }
@@ -270,36 +326,54 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
   return true;
 }
 
-bool MayaUsbDevice::sendDataSync(void* data, size_t bytes) {
-  if (_outEndpoint == 0) {
-    return false;
+int MayaUsbDevice::sendRgbaFloat32Sync(void* data,
+  MHWRender::MTextureDescription desc) {
+  size_t rgbImageSize = desc.fWidth * desc.fHeight * 3 /* RGB bytes */;
+  if (rgbImageSize > RGB_IMAGE_SIZE) {
+    return 0;
   }
 
+  float* rgbaData = reinterpret_cast<float*>(data);
+  for (int i = 0; i < rgbImageSize; ++i) {
+    int pixel = i / 3;
+    int offset = i % 3;
+    int rgbaIndex = pixel * 4 + offset;
+    float val = rgbaData[rgbaIndex];
+    _rgbImageBuffer[i] = (unsigned char) (val * 255.9999f);
+  }
+
+  // Convert _rgbImageBuffer to JPEG.
   if (_syncReadMutex.try_lock()) {
-    std::cout << "$" << std::endl;
-    int bytesLimit = std::min(MAX_IMAGE_SIZE, bytes);
-
     std::lock_guard<std::mutex> lock(_syncReadMutex, std::adopt_lock);
-    std::memcpy(_syncReadBuffer, data, bytesLimit);
-    _syncReadBufferSize = bytesLimit;
-    _syncRead = true;
-    _syncReadCv.notify_one();
-  } else {
-    std::cout << "#" << std::endl;
+    if (!_syncRead) {
+      std::cout << "$" << std::endl;
+      tjCompress2(_jpegCompressor,
+          _rgbImageBuffer,
+          desc.fWidth,
+          0,
+          desc.fHeight,
+          TJPF_RGB,
+          &_jpegBuffer,
+          &_jpegBufferSize,
+          TJSAMP_420,
+          80 /* quality 1 to 100 */,
+          0);
+      _syncRead = true;
+      _syncReadCv.notify_one();
+      return _jpegBufferSize;
+    }
   }
 
-  return true;
+  std::cout << "#" << std::endl;
+  return 0;
 }
 
 void MayaUsbDevice::initUsb() {
   if (_usb) {
     return;
   }
-  libusb_context* ctx;
-  if (libusb_init(&ctx) == 0) {
-    _usb = ctx;
-    std::cout << "libusb INIT" << std::endl;
-  }
+  libusb_init(&_usb);
+  std::cout << "libusb INIT" << std::endl;
 }
 
 void MayaUsbDevice::exitUsb() {
@@ -308,4 +382,20 @@ void MayaUsbDevice::exitUsb() {
     std::cout << "libusb EXIT" << std::endl;
   }
   _usb = nullptr;
+}
+
+void MayaUsbDevice::initJpeg() {
+  if (_jpegCompressor) {
+    return;
+  }
+  _jpegCompressor = tjInitCompress();
+  std::cout << "TurboJPEG INIT" << std::endl;
+}
+
+void MayaUsbDevice::exitJpeg() {
+  if (_jpegCompressor) {
+    tjDestroy(_jpegCompressor);
+    std::cout << "TurboJPEG EXIT" << std::endl;
+  }
+  _jpegCompressor = nullptr;
 }

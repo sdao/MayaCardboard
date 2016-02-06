@@ -1,6 +1,8 @@
 #pragma once
 
+#include <maya/MTextureManager.h>
 #include <libusb-1.0/libusb.h>
+#include <turbojpeg.h>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -47,23 +49,31 @@ struct MayaUsbDeviceId {
 };
 
 class MayaUsbDevice {
-  static constexpr size_t MAX_IMAGE_SIZE = 1024 * 1024 * 10; // 1 MB.
+  static constexpr size_t RGB_IMAGE_SIZE = 1024 * 1024 * 16; // 16 MB.
   static constexpr size_t BUFFER_LEN = 16384;
 
   static libusb_context* _usb;
+  static tjhandle _jpegCompressor;
 
   libusb_device_handle* _hnd;
+
   MayaUsbDeviceId _id;
   std::string _manufacturer;
   std::string _product;
   uint8_t _inEndpoint;
   uint8_t _outEndpoint;
+
   std::shared_ptr<InterruptibleThread> _worker;
-  bool _syncRead;
-  unsigned char* _syncReadBuffer;
-  size_t _syncReadBufferSize;
+
+  std::atomic_bool _handshake;
+
+  bool _syncRead; /* Note: doesn't have to be atomic because we lock. */
   std::mutex _syncReadMutex;
   std::condition_variable _syncReadCv;
+
+  unsigned char* _rgbImageBuffer;
+  unsigned char* _jpegBuffer;
+  size_t _jpegBufferSize;
 
   int16_t getControlInt16(uint8_t request);
   void sendControl(uint8_t request);
@@ -78,9 +88,12 @@ public:
   std::string getDescription();
   void convertToAccessory();
   bool waitHandshakeAsync(std::function<void(bool)> callback);
+  bool isHandshakeComplete();
   bool beginSendLoop(std::function<void()> failureCallback);
-  bool sendDataSync(void* data, size_t bytes);
+  int sendRgbaFloat32Sync(void* data, MHWRender::MTextureDescription desc);
 
   static void initUsb();
   static void exitUsb();
+  static void initJpeg();
+  static void exitJpeg();
 };

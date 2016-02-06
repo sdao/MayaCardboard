@@ -13,6 +13,7 @@
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <mutex>
 
 #include "MayaUsbDevice.h"
 
@@ -29,15 +30,15 @@
 
 class MayaUsbStreamer {
   static int _debugFrameNum;
-  static std::atomic_bool _handshake;
   static std::shared_ptr<MayaUsbDevice> _usbDevice;
+  static std::mutex _usbDeviceMutex;
 
 public:
   static void createDevice() {
+    std::lock_guard<std::mutex> lock(_usbDeviceMutex);
     _usbDevice = std::make_shared<MayaUsbDevice>();
     _usbDevice->waitHandshakeAsync([](bool success) {
       if (success) {
-        _handshake.store(true);
         _usbDevice->beginSendLoop([]{
           cleanup();
           MGlobal::displayError("Transfer error; USB device disconnected");
@@ -49,6 +50,7 @@ public:
     });
   }
   static std::shared_ptr<MayaUsbDevice> getDevice() { return _usbDevice; }
+  static std::mutex& getMutex() { return _usbDeviceMutex; }
   static bool registerNotifications() {
     MHWRender::MRenderer *renderer = MHWRender::MRenderer::theRenderer();
     if (renderer) {
@@ -61,23 +63,23 @@ public:
     return false;
   }
   static bool isConnected() { return _usbDevice != nullptr; }
-  static bool isHandshakeComplete() { return _handshake.load(); }
   static void cleanup() {
-    _handshake.store(false);
-    _usbDevice = nullptr;
     MHWRender::MRenderer *renderer = MHWRender::MRenderer::theRenderer();
     if (renderer) {
       renderer->removeNotification(CALLBACK_NAME,
         MHWRender::MPassContext::kEndRenderSemantic);
     }
+
+    std::lock_guard<std::mutex> lock(_usbDeviceMutex);
+    _usbDevice = nullptr;
   }
   static void captureCallback(MHWRender::MDrawContext &context,
       void* clientData);
 };
 
 int MayaUsbStreamer::_debugFrameNum(0);
-std::atomic_bool MayaUsbStreamer::_handshake(false);
 std::shared_ptr<MayaUsbDevice> MayaUsbStreamer::_usbDevice(nullptr);
+std::mutex MayaUsbStreamer::_usbDeviceMutex;
 
 class UsbConnectCommand : public MPxCommand {
 public:
@@ -93,6 +95,7 @@ public:
   static void* creator() { return new UsbStatusCommand(); }
   static MSyntax newSyntax() { return MSyntax(); }
   virtual MStatus doIt(const MArgList& args) {
+    std::lock_guard<std::mutex> lock(MayaUsbStreamer::getMutex());
     if (MayaUsbStreamer::isConnected()) {
       std::string desc = MayaUsbStreamer::getDevice()->getDescription();
       MGlobal::displayInfo(desc.c_str());
@@ -199,29 +202,27 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
     return;
   }
 
-  const MHWRender::MRenderTarget* colorTarget =
-      context.getCurrentColorRenderTarget();
-  if (colorTarget) {
-    MHWRender::MRenderTargetDescription desc;
-    colorTarget->targetDescription(desc);
-    std::cout << "  -> format " << desc.rasterFormat() << std::endl;
-    std::cout << "  -> " << desc.width() << "x" << desc.height() << std::endl;
-  }
-
   MHWRender::MTexture* colorTexture =
       context.copyCurrentColorRenderTargetToTexture();
   if (colorTexture) {
+    MHWRender::MTextureDescription desc;
+    colorTexture->textureDescription(desc);
+
+    if (desc.fFormat != MHWRender::kR32G32B32A32_FLOAT) {
+      return;
+    }
+
     int row, slice;
     void* rawData = colorTexture->rawData(row, slice);
 
-    if (MayaUsbStreamer::isHandshakeComplete()) {
-      bool status = MayaUsbStreamer::getDevice()->sendDataSync(rawData, slice);
-      if (status) {
-        std::cout << "  -> sent " << slice << std::endl;
-      } else {
-        MayaUsbStreamer::cleanup();
-        MGlobal::displayError("Streaming error, USB device disconnected");
-      }
+    std::lock_guard<std::mutex> lock(MayaUsbStreamer::getMutex());
+    if (MayaUsbStreamer::isConnected() &&
+        MayaUsbStreamer::getDevice()->isHandshakeComplete()) {
+      int written =
+          MayaUsbStreamer::getDevice()->sendRgbaFloat32Sync(rawData, desc);
+      std::cout << "  -> format " << desc.fFormat << std::endl;
+      std::cout << "  -> " << desc.fWidth << "x" << desc.fHeight << std::endl;
+      std::cout << "  -> sent " << written << std::endl;
     }
 
     MHWRender::MTexture::freeRawData(rawData);
@@ -260,6 +261,7 @@ MStatus initializePlugin(MObject obj) {
   }
 
   MayaUsbDevice::initUsb();
+  MayaUsbDevice::initJpeg();
 
   return status;
 }
@@ -289,6 +291,7 @@ MStatus uninitializePlugin(MObject obj) {
   }
 
   MayaUsbDevice::exitUsb();
+  MayaUsbDevice::exitJpeg();
 
   return status;
 }

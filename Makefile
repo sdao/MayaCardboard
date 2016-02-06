@@ -44,7 +44,7 @@ $(MayaUsbStreamer_OBJECTS): INCLUDES := $(INCLUDES) $(MayaUsbStreamer_EXTRA_INCL
 depend_MayaUsbStreamer:     INCLUDES := $(INCLUDES) $(MayaUsbStreamer_EXTRA_INCLUDES)
 
 $(MayaUsbStreamer_PLUGIN):  LFLAGS   := $(LFLAGS) $(MayaUsbStreamer_EXTRA_LFLAGS)
-$(MayaUsbStreamer_PLUGIN):  LIBS     := $(LIBS)   -lOpenMaya -lOpenMayaUI -lOpenMayaAnim -lOpenMayaRender -lFoundation -lGL -lusb-1.0 $(MayaUsbStreamer_EXTRA_LIBS)
+$(MayaUsbStreamer_PLUGIN):  LIBS     := $(LIBS)   -lOpenMaya -lOpenMayaUI -lOpenMayaAnim -lOpenMayaRender -lFoundation -lGL -lusb-1.0 -lturbojpeg $(MayaUsbStreamer_EXTRA_LIBS)
 
 #
 # Rules definitions
