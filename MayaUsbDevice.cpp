@@ -11,8 +11,7 @@ MayaUsbDevice::MayaUsbDevice(uint16_t vid, uint16_t pid)
 
 MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
     : _hnd(nullptr),
-      _currentTransfer(nullptr),
-      _currentTransferBuffer(new unsigned char[BUFFER_LEN]) {
+      _worker(nullptr) {
   int status;
 
   for (const MayaUsbDeviceId& id : ids) {
@@ -90,9 +89,14 @@ MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
 }
 
 MayaUsbDevice::~MayaUsbDevice() {
-  cleanupTransfer();
-  delete[] _currentTransferBuffer;
-  libusb_close(_hnd);
+  if (_worker && !_worker->isCancelled()) {
+    _worker->cancel();
+    // Wait 1s since our loop checks every 500ms for cancel flag.
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    libusb_close(_hnd);
+  } else {
+    libusb_close(_hnd);
+  }
 }
 
 std::string MayaUsbDevice::getDescription() {
@@ -189,45 +193,32 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
     return false;
   }
 
-  cleanupTransfer();
+  _worker = std::make_shared<InterruptibleThread>(
+    [=](const InterruptibleThread::SharedAtomicBool cancel) {
+      unsigned char* inputBuffer = new unsigned char[BUFFER_LEN];
+      int read = 0;
+      bool cancelled;
+      while (!(cancelled = cancel->load())) {
+        std::cout << "Waiting..." << std::endl;
+        libusb_bulk_transfer(_hnd,
+            _inEndpoint,
+            inputBuffer,
+            BUFFER_LEN,
+            &read,
+            500);
+      }
+      delete[] inputBuffer;
 
-  _currentTransferCallback = callback;
-  _currentTransfer = libusb_alloc_transfer(0);
-  libusb_fill_bulk_transfer(_currentTransfer,
-      _hnd,
-      _inEndpoint,
-      _currentTransferBuffer,
-      BUFFER_LEN,
-      handshakeCallback,
-      this,
-      0);
-  libusb_submit_transfer(_currentTransfer);
+      if (cancelled) {
+        std::cout << "Cancelled!" << std::endl;
+      } else {
+        std::cout << "Received handshake!" << std::endl;
+        callback(read > 0);
+      }
+    }
+  );
 
   return true;
-}
-
-void MayaUsbDevice::cleanupTransfer() {
-  if (_currentTransfer) {
-    libusb_cancel_transfer(_currentTransfer);
-    _currentTransfer = nullptr;
-    _currentTransferCallback = nullptr;
-  }
-}
-
-void LIBUSB_CALL MayaUsbDevice::handshakeCallback(libusb_transfer* transfer) {
-  if (transfer->status != LIBUSB_TRANSFER_CANCELLED) {
-    MayaUsbDevice* mud = reinterpret_cast<MayaUsbDevice*>(transfer->user_data);
-    mud->cleanupTransfer();
-
-    bool success = transfer->status == LIBUSB_TRANSFER_COMPLETED;
-    if (mud->_currentTransferCallback) {
-      mud->_currentTransferCallback(success);
-    }
-  } else {
-    std::cout << "Cancelled!" << std::endl;
-  }
-
-  libusb_free_transfer(transfer);
 }
 
 void MayaUsbDevice::initUsb() {

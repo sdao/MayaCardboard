@@ -5,7 +5,31 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <atomic>
 #include <thread>
+
+class InterruptibleThread {
+public:
+  using SharedAtomicBool = std::shared_ptr<std::atomic_bool>;
+
+  InterruptibleThread(std::function<void(const SharedAtomicBool)> func) {
+    _cancel = std::make_shared<std::atomic_bool>(false);
+    std::thread thread([=]() {
+      func(_cancel);
+    });
+    thread.detach();
+  }
+
+  ~InterruptibleThread() {
+    cancel();
+  }
+
+  void cancel() { _cancel->store(true); }
+  bool isCancelled() { return _cancel->load(); }
+
+private:
+  SharedAtomicBool _cancel;
+};
 
 struct MayaUsbDeviceId {
   uint16_t vid;
@@ -26,21 +50,17 @@ class MayaUsbDevice {
   static libusb_context* _usb;
 
   libusb_device_handle* _hnd;
-  libusb_transfer* _currentTransfer;
-  std::function<void(bool)> _currentTransferCallback;
-  unsigned char* _currentTransferBuffer;
   MayaUsbDeviceId _id;
   std::string _manufacturer;
   std::string _product;
   uint8_t _inEndpoint;
   uint8_t _outEndpoint;
+  std::shared_ptr<InterruptibleThread> _worker;
 
   int16_t getControlInt16(uint8_t request);
   void sendControl(uint8_t request);
   void sendControlString(uint8_t request, uint16_t index, std::string str);
-  void cleanupTransfer();
-
-  static void LIBUSB_CALL handshakeCallback(libusb_transfer* transfer);
+  void cleanupWorker();
 
 public:
   MayaUsbDevice(uint16_t vid, uint16_t pid);
