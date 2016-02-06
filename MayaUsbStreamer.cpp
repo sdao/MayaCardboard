@@ -32,6 +32,7 @@ class MayaUsbStreamer {
   static int _debugFrameNum;
   static std::shared_ptr<MayaUsbDevice> _usbDevice;
   static std::mutex _usbDeviceMutex;
+  static MString _panelName;
 
 public:
   static void createDevice() {
@@ -51,16 +52,20 @@ public:
   }
   static std::shared_ptr<MayaUsbDevice> getDevice() { return _usbDevice; }
   static std::mutex& getMutex() { return _usbDeviceMutex; }
-  static bool registerNotifications() {
+  static bool registerNotifications(const MString& panelName) {
     MHWRender::MRenderer *renderer = MHWRender::MRenderer::theRenderer();
     if (renderer) {
       renderer->addNotification(captureCallback,
         CALLBACK_NAME,
         MHWRender::MPassContext::kEndRenderSemantic,
         nullptr);
+      _panelName = panelName;
       return true;
     }
     return false;
+  }
+  static const MString getRegisteredPanelName() {
+    return _panelName;
   }
   static bool isConnected() { return _usbDevice != nullptr; }
   static void cleanup() {
@@ -80,6 +85,7 @@ public:
 int MayaUsbStreamer::_debugFrameNum(0);
 std::shared_ptr<MayaUsbDevice> MayaUsbStreamer::_usbDevice(nullptr);
 std::mutex MayaUsbStreamer::_usbDeviceMutex;
+MString MayaUsbStreamer::_panelName;
 
 class UsbConnectCommand : public MPxCommand {
 public:
@@ -135,6 +141,7 @@ MSyntax UsbConnectCommand::newSyntax() {
   syntax.enableEdit(false);
   syntax.enableQuery(false);
   syntax.addFlag("-id", "-deviceId", MSyntax::kString, MSyntax::kString);
+  syntax.addFlag("-p", "-deviceId", MSyntax::kString);
   return syntax;
 }
 
@@ -155,6 +162,12 @@ MStatus UsbConnectCommand::doIt(const MArgList& args) {
   MString pid;
   if (!argData.getFlagArgument("-id", 1, pid) != MStatus::kSuccess) {
     MGlobal::displayError("Error parsing -id PID component");
+    return MStatus::kFailure;
+  }
+
+  MString panel;
+  if (!argData.getFlagArgument("-p", 0, panel) != MStatus::kSuccess) {
+    MGlobal::displayError("Error getting -p panel name");
     return MStatus::kFailure;
   }
 
@@ -181,7 +194,7 @@ MStatus UsbConnectCommand::doIt(const MArgList& args) {
     }
 
     MayaUsbStreamer::createDevice();
-    MayaUsbStreamer::registerNotifications();
+    MayaUsbStreamer::registerNotifications(panel);
 
     MGlobal::displayInfo("USB device connected!");
     return MStatus::kSuccess;
@@ -196,6 +209,11 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
   MString destName;
   context.renderingDestination(destName);
   std::cout << _debugFrameNum++ << " " << destName.asChar() << std::endl;
+
+  if (destName != MayaUsbStreamer::getRegisteredPanelName()) {
+    std::cout << "  -> skip" << std::endl;
+    return;
+  }
 
   MHWRender::MRenderer* renderer = MHWRender::MRenderer::theRenderer();
   if (!renderer) {
