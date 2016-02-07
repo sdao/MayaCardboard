@@ -79,7 +79,10 @@ class MayaUsbDevice {
   int16_t getControlInt16(uint8_t request);
   void sendControl(uint8_t request);
   void sendControlString(uint8_t request, uint16_t index, std::string str);
-  void cleanupWorker();
+  static void fillBufferRgbaFloat(void* src, unsigned char* dest,
+      size_t destSize);
+  static void fillBufferRgbaUchar(void* src, unsigned char* dest,
+      size_t destSize);
 
 public:
   MayaUsbDevice(uint16_t vid, uint16_t pid);
@@ -91,7 +94,8 @@ public:
   bool waitHandshakeAsync(std::function<void(bool)> callback);
   bool isHandshakeComplete();
   bool beginSendLoop(std::function<void()> failureCallback);
-  int sendRgbaFloat32Sync(void* data, MHWRender::MTextureDescription desc);
+  int sendRaster(void* data, MHWRender::MTextureDescription desc);
+  static bool supportsRasterFormat(MHWRender::MRasterFormat format);
 
   static void initUsb();
   static void exitUsb();

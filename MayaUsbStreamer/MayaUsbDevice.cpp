@@ -339,20 +339,31 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
   return true;
 }
 
-int MayaUsbDevice::sendRgbaFloat32Sync(void* data,
-  MHWRender::MTextureDescription desc) {
+bool MayaUsbDevice::supportsRasterFormat(MHWRender::MRasterFormat format) {
+  switch (format) {
+    case MHWRender::kR32G32B32A32_FLOAT:
+    case MHWRender::kR8G8B8A8_UNORM:
+      return true;
+    default:
+      return false;
+  }
+}
+
+int MayaUsbDevice::sendRaster(void* data, MHWRender::MTextureDescription desc) {
   size_t rgbImageSize = desc.fWidth * desc.fHeight * 3 /* RGB bytes */;
   if (rgbImageSize > RGB_IMAGE_SIZE) {
     return 0;
   }
 
-  float* rgbaData = reinterpret_cast<float*>(data);
-  for (int i = 0; i < rgbImageSize; ++i) {
-    int pixel = i / 3;
-    int offset = i % 3;
-    int rgbaIndex = pixel * 4 + offset;
-    float val = rgbaData[rgbaIndex];
-    _rgbImageBuffer[i] = (unsigned char) (val * 255.9999f);
+  switch (desc.fFormat) {
+    case MHWRender::kR32G32B32A32_FLOAT:
+      fillBufferRgbaFloat(data, _rgbImageBuffer, rgbImageSize);
+      break;
+    case MHWRender::kR8G8B8A8_UNORM:
+      fillBufferRgbaUchar(data, _rgbImageBuffer, rgbImageSize);
+      break;
+    default:
+      return 0;
   }
 
   // Convert _rgbImageBuffer to JPEG.
@@ -379,6 +390,30 @@ int MayaUsbDevice::sendRgbaFloat32Sync(void* data,
 
   std::cout << "#" << std::endl;
   return 0;
+}
+
+void MayaUsbDevice::fillBufferRgbaFloat(void* src, unsigned char* dest,
+    size_t destSize) {
+  float* rgbaData = reinterpret_cast<float*>(src);
+  for (int i = 0; i < destSize; ++i) {
+    int pixel = i / 3;
+    int offset = i % 3;
+    int rgbaIndex = pixel * 4 + offset;
+    float val = rgbaData[rgbaIndex];
+    dest[i] = (unsigned char) (val * 255.9999f);
+  }
+}
+
+void MayaUsbDevice::fillBufferRgbaUchar(void* src, unsigned char* dest,
+    size_t destSize) {
+  unsigned char* rgbaData = reinterpret_cast<unsigned char*>(src);
+  for (int i = 0; i < destSize; ++i) {
+    int pixel = i / 3;
+    int offset = i % 3;
+    int rgbaIndex = pixel * 4 + offset;
+    unsigned char val = rgbaData[rgbaIndex];
+    dest[i] = val;
+  }
 }
 
 void MayaUsbDevice::initUsb() {

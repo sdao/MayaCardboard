@@ -28,6 +28,9 @@
 
 #define CALLBACK_NAME "MayaUsbStreamer_PostRender"
 
+#define RENDER_WIDTH 800
+#define RENDER_HEIGHT 600
+
 class MayaUsbStreamer {
   static int _debugFrameNum;
   static std::shared_ptr<MayaUsbDevice> _usbDevice;
@@ -59,6 +62,7 @@ public:
         CALLBACK_NAME,
         MHWRender::MPassContext::kEndRenderSemantic,
         nullptr);
+      renderer->setOutputTargetOverrideSize(RENDER_WIDTH, RENDER_HEIGHT);
       _panelName = panelName;
       return true;
     }
@@ -71,6 +75,7 @@ public:
   static void cleanup() {
     MHWRender::MRenderer *renderer = MHWRender::MRenderer::theRenderer();
     if (renderer) {
+      renderer->unsetOutputTargetOverrideSize();
       renderer->removeNotification(CALLBACK_NAME,
         MHWRender::MPassContext::kEndRenderSemantic);
     }
@@ -211,7 +216,7 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
   std::cout << _debugFrameNum++ << " " << destName.asChar() << std::endl;
 
   if (destName != MayaUsbStreamer::getRegisteredPanelName()) {
-    std::cout << "  -> skip" << std::endl;
+    std::cout << "  -> skip (" << destName << ")" << std::endl;
     return;
   }
 
@@ -226,24 +231,27 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
     MHWRender::MTextureDescription desc;
     colorTexture->textureDescription(desc);
 
-    if (desc.fFormat != MHWRender::kR32G32B32A32_FLOAT) {
-      return;
-    }
+    if (MayaUsbDevice::supportsRasterFormat(desc.fFormat)) {
+      int written = 0;
+      int row, slice;
+      void* rawData = colorTexture->rawData(row, slice);
 
-    int row, slice;
-    void* rawData = colorTexture->rawData(row, slice);
+      {
+        std::lock_guard<std::mutex> lock(MayaUsbStreamer::getMutex());
+        if (MayaUsbStreamer::isConnected() &&
+            MayaUsbStreamer::getDevice()->isHandshakeComplete()) {
+          written = MayaUsbStreamer::getDevice()->sendRaster(rawData, desc);
+        }
+      }
 
-    std::lock_guard<std::mutex> lock(MayaUsbStreamer::getMutex());
-    if (MayaUsbStreamer::isConnected() &&
-        MayaUsbStreamer::getDevice()->isHandshakeComplete()) {
-      int written =
-          MayaUsbStreamer::getDevice()->sendRgbaFloat32Sync(rawData, desc);
       std::cout << "  -> format " << desc.fFormat << std::endl;
       std::cout << "  -> " << desc.fWidth << "x" << desc.fHeight << std::endl;
       std::cout << "  -> sent " << written << std::endl;
-    }
 
-    MHWRender::MTexture::freeRawData(rawData);
+      MHWRender::MTexture::freeRawData(rawData);
+    } else {
+      std::cout << "  -> unsupported format " << desc.fFormat << std::endl;
+    }
 
     MHWRender::MTextureManager* textureManager = renderer->getTextureManager();
     textureManager->releaseTexture(colorTexture);
