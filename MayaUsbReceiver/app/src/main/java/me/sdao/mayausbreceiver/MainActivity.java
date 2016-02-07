@@ -100,20 +100,26 @@ public class MainActivity extends AppCompatActivity {
         // Handle item selection
         switch (item.getItemId()) {
             case R.id.send_handshake:
-                UsbManager manager = getSystemService(UsbManager.class);
+                if (getIntent().hasExtra(UsbManager.EXTRA_ACCESSORY)) {
+                    UsbAccessory accessory = getIntent()
+                            .getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
+                    connectAccessory(accessory);
+                } else {
+                    UsbManager manager = getSystemService(UsbManager.class);
 
-                UsbAccessory[] accessories = manager.getAccessoryList();
-                if (accessories.length == 0) {
-                    toast("No accessories connected");
-                    return true;
+                    UsbAccessory[] accessories = manager.getAccessoryList();
+                    if (accessories.length == 0) {
+                        toast("No accessories connected");
+                        return true;
+                    }
+
+                    mPermissionIntent = PendingIntent.getBroadcast(MainActivity.this,
+                            0, new Intent(ACTION_USB_PERMISSION), 0);
+                    registerReceiver(mUsbReceiver, new IntentFilter(ACTION_USB_PERMISSION));
+
+                    UsbAccessory accessory = accessories[0];
+                    manager.requestPermission(accessory, mPermissionIntent);
                 }
-
-                mPermissionIntent = PendingIntent.getBroadcast(MainActivity.this,
-                        0, new Intent(ACTION_USB_PERMISSION), 0);
-                registerReceiver(mUsbReceiver, new IntentFilter(ACTION_USB_PERMISSION));
-
-                UsbAccessory accessory = accessories[0];
-                manager.requestPermission(accessory, mPermissionIntent);
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
