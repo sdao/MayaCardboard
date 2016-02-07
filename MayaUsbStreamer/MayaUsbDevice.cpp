@@ -242,7 +242,7 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
       delete[] inputBuffer;
 
       if (cancelled) {
-        std::cout << "Cancelled!" << std::endl;
+        std::cout << "Handshake cancelled!" << std::endl;
       } else {
         bool success = read > 0;
         std::cout << "Received handshake, success=" << success << std::endl;
@@ -262,6 +262,50 @@ bool MayaUsbDevice::isHandshakeComplete() {
   return _handshake.load();
 }
 
+bool MayaUsbDevice::beginReadLoop(
+    std::function<void(const unsigned char*)> callback,
+    size_t readFrame) {
+  if (_inEndpoint == 0) {
+    return false;
+  }
+
+  if (!_handshake.load()) {
+    return false;
+  }
+
+  _receiveWorker = std::make_shared<InterruptibleThread>(
+    [=](const InterruptibleThread::SharedAtomicBool cancel) {
+      unsigned char* inputBuffer = new unsigned char[readFrame];
+      int read = 0;
+      int status = LIBUSB_ERROR_TIMEOUT;
+      bool cancelled;
+      while (!(cancelled = cancel->load()) &&
+          (status == 0 || status == LIBUSB_ERROR_TIMEOUT)) {
+        status = libusb_bulk_transfer(_hnd,
+            _inEndpoint,
+            inputBuffer,
+            readFrame,
+            &read,
+            500);
+        if (status == 0) {
+          callback(inputBuffer);
+        }
+      }
+      delete[] inputBuffer;
+
+      if (!cancelled) {
+        // Error if loop ended but not cancelled.
+        callback(nullptr);
+      }
+
+      std::cout << "Read loop ended" << std::endl;
+      cancel->store(true);
+    }
+  );
+
+  return true;
+}
+
 bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
   if (_outEndpoint == 0) {
     return false;
@@ -270,6 +314,9 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
   if (!_handshake.load()) {
     return false;
   }
+
+  // Reset in case there was a previous send loop.
+  _sendReady = false;
 
   _sendWorker = std::make_shared<InterruptibleThread>(
     [=](const InterruptibleThread::SharedAtomicBool cancel) {
@@ -292,7 +339,7 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
               500);
 
           // Ignore if written or not.
-          return;
+          break;
         } else {
           int written = 0;
 
@@ -307,7 +354,7 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
               500);
           if (written < 4) {
             failureCallback();
-            return;
+            break;
           }
 
           // Write JPEG in BUFFER_LEN chunks.
@@ -324,7 +371,7 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
 
             if (written < chunk) {
               failureCallback();
-              return;
+              break;
             }
           }
         }
@@ -332,7 +379,9 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
         // Only reset send flag if successful.
         _sendReady = false;
       }
+
       std::cout << "Send loop ended" << std::endl;
+      cancel->store(true);
     }
   );
 

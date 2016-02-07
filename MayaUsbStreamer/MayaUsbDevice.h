@@ -93,6 +93,8 @@ public:
   void convertToAccessory();
   bool waitHandshakeAsync(std::function<void(bool)> callback);
   bool isHandshakeComplete();
+  bool beginReadLoop(std::function<void(const unsigned char*)> callback,
+      size_t readFrame);
   bool beginSendLoop(std::function<void()> failureCallback);
   int sendRaster(void* data, MHWRender::MTextureDescription desc);
   static bool supportsRasterFormat(MHWRender::MRasterFormat format);

@@ -23,6 +23,7 @@ import android.view.SurfaceView;
 import android.widget.Toast;
 
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -187,14 +188,26 @@ public class MainActivity extends AppCompatActivity {
         new Thread(null, new Runnable() {
             @Override
             public void run() {
+                byte[] ack = new byte[] { 4, 8, 15, 16 };
                 byte[] buffer = new byte[1024 * 1024]; // Initialize 1 MB at first.
                 Bitmap bitmap;
                 BitmapFactory.Options options = new BitmapFactory.Options();
                 options.inMutable = true;
 
-                try (InputStream is = new FileInputStream(fd)) {
+                try (
+                        InputStream is = new FileInputStream(fd);
+                        OutputStream os = new FileOutputStream(fd);
+                ) {
                     DataInputStream dis = new DataInputStream(is);
+                    DataOutputStream dos = new DataOutputStream(os);
+
+                    int i = 0;
                     while (true) {
+                        ++i;
+                        if (i % 100 == 0) {
+                            dos.write(ack);
+                        }
+
                         int size = dis.readInt();
                         Log.i("SIZE", "size=" + size);
 

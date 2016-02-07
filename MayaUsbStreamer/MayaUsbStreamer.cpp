@@ -45,8 +45,19 @@ public:
       if (success) {
         _usbDevice->beginSendLoop([]{
           cleanup();
-          MGlobal::displayError("Transfer error; USB device disconnected");
+          MGlobal::displayError("Send error; USB device disconnected");
         });
+        _usbDevice->beginReadLoop([](const unsigned char* data){
+          if (data == nullptr) {
+            cleanup();
+            MGlobal::displayError("Receive error; USB device disconnected");
+          } else {
+            std::cout << "Ack: " << (int) data[0] << " "
+                                 << (int) data[1] << " "
+                                 << (int) data[2] << " "
+                                 << (int) data[3] << std::endl;
+          }
+        }, 4);
       } else {
         cleanup();
         MGlobal::displayError("Handshake error; USB device disconnected");
