@@ -67,9 +67,9 @@ class MayaUsbDevice {
 
   std::atomic_bool _handshake;
 
-  bool _syncRead; /* Note: doesn't have to be atomic because we lock. */
-  std::mutex _syncReadMutex;
-  std::condition_variable _syncReadCv;
+  bool _sendReady; /* Note: doesn't have to be atomic because we lock. */
+  std::mutex _sendMutex;
+  std::condition_variable _sendCv;
 
   unsigned char* _rgbImageBuffer;
   unsigned char* _jpegBuffer;

@@ -16,7 +16,7 @@ MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
     : _hnd(nullptr),
       _worker(nullptr),
       _handshake(false),
-      _syncRead(false),
+      _sendReady(false),
       _rgbImageBuffer(new unsigned char[RGB_IMAGE_SIZE]),
       _jpegBuffer(nullptr) {
   int status;
@@ -102,8 +102,8 @@ MayaUsbDevice::~MayaUsbDevice() {
   }
 
   if (_worker && !_worker->isCancelled()) {
-    _worker->cancel();
-    _syncReadCv.notify_one();
+    _worker->cancel(); // Cancel any running InterruptibleThread.
+    _sendCv.notify_one(); // Wake up the send loop so it can cancel.
     // Wait 1s since our loop checks every 500ms for cancel flag.
     std::this_thread::sleep_for(std::chrono::seconds(1));
     libusb_close(_hnd);
@@ -261,9 +261,9 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
   _worker = std::make_shared<InterruptibleThread>(
     [=](const InterruptibleThread::SharedAtomicBool cancel) {
       while (true) {
-        std::unique_lock<std::mutex> lock(_syncReadMutex);
-        _syncReadCv.wait(lock, [&]{
-          return _syncRead || cancel->load();
+        std::unique_lock<std::mutex> lock(_sendMutex);
+        _sendCv.wait(lock, [&]{
+          return _sendReady || cancel->load();
         });
 
         if (cancel->load()) {
@@ -317,7 +317,7 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
         }
 
         // Only reset send flag if successful.
-        _syncRead = false;
+        _sendReady = false;
       }
       std::cout << "Send loop ended" << std::endl;
     }
@@ -343,9 +343,9 @@ int MayaUsbDevice::sendRgbaFloat32Sync(void* data,
   }
 
   // Convert _rgbImageBuffer to JPEG.
-  if (_syncReadMutex.try_lock()) {
-    std::lock_guard<std::mutex> lock(_syncReadMutex, std::adopt_lock);
-    if (!_syncRead) {
+  if (_sendMutex.try_lock()) {
+    std::lock_guard<std::mutex> lock(_sendMutex, std::adopt_lock);
+    if (!_sendReady) {
       std::cout << "$" << std::endl;
       tjCompress2(_jpegCompressor,
           _rgbImageBuffer,
@@ -358,8 +358,8 @@ int MayaUsbDevice::sendRgbaFloat32Sync(void* data,
           TJSAMP_420,
           80 /* quality 1 to 100 */,
           0);
-      _syncRead = true;
-      _syncReadCv.notify_one();
+      _sendReady = true;
+      _sendCv.notify_one();
       return _jpegBufferSize;
     }
   }
