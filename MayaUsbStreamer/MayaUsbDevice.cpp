@@ -14,7 +14,8 @@ MayaUsbDevice::MayaUsbDevice(uint16_t vid, uint16_t pid)
 
 MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
     : _hnd(nullptr),
-      _worker(nullptr),
+      _receiveWorker(nullptr),
+      _sendWorker(nullptr),
       _handshake(false),
       _sendReady(false),
       _rgbImageBuffer(new unsigned char[RGB_IMAGE_SIZE]),
@@ -101,15 +102,27 @@ MayaUsbDevice::~MayaUsbDevice() {
     tjFree(_jpegBuffer);
   }
 
-  if (_worker && !_worker->isCancelled()) {
-    _worker->cancel(); // Cancel any running InterruptibleThread.
-    _sendCv.notify_one(); // Wake up the send loop so it can cancel.
-    // Wait 1s since our loop checks every 500ms for cancel flag.
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    libusb_close(_hnd);
-  } else {
-    libusb_close(_hnd);
+  bool receiving = _receiveWorker && !_receiveWorker->isCancelled();
+  bool sending = _sendWorker && !_sendWorker->isCancelled();
+  bool needDelay = false;
+
+  if (receiving) {
+    _receiveWorker->cancel();
+    needDelay = true;
   }
+
+  if (sending) {
+    _sendWorker->cancel();
+    _sendCv.notify_one(); // Wake up the send loop so it can cancel.
+    needDelay = true;
+  }
+
+  if (needDelay) {
+    // Wait 1s since our send/receive loops check every 500ms for cancel flag.
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+
+  libusb_close(_hnd);
 }
 
 std::string MayaUsbDevice::getDescription() {
@@ -210,7 +223,7 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
     return false;
   }
 
-  _worker = std::make_shared<InterruptibleThread>(
+  _receiveWorker = std::make_shared<InterruptibleThread>(
     [=](const InterruptibleThread::SharedAtomicBool cancel) {
       unsigned char* inputBuffer = new unsigned char[BUFFER_LEN];
       int i = 0;
@@ -258,7 +271,7 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
     return false;
   }
 
-  _worker = std::make_shared<InterruptibleThread>(
+  _sendWorker = std::make_shared<InterruptibleThread>(
     [=](const InterruptibleThread::SharedAtomicBool cancel) {
       while (true) {
         std::unique_lock<std::mutex> lock(_sendMutex);

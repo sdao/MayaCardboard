@@ -141,7 +141,7 @@ MSyntax UsbConnectCommand::newSyntax() {
   syntax.enableEdit(false);
   syntax.enableQuery(false);
   syntax.addFlag("-id", "-deviceId", MSyntax::kString, MSyntax::kString);
-  syntax.addFlag("-p", "-deviceId", MSyntax::kString);
+  syntax.addFlag("-p", "-panel", MSyntax::kString);
   return syntax;
 }
 

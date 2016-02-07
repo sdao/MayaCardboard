@@ -63,10 +63,11 @@ class MayaUsbDevice {
   uint8_t _inEndpoint;
   uint8_t _outEndpoint;
 
-  std::shared_ptr<InterruptibleThread> _worker;
-
   std::atomic_bool _handshake;
 
+  std::shared_ptr<InterruptibleThread> _receiveWorker;
+
+  std::shared_ptr<InterruptibleThread> _sendWorker;
   bool _sendReady; /* Note: doesn't have to be atomic because we lock. */
   std::mutex _sendMutex;
   std::condition_variable _sendCv;
