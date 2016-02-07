@@ -30,6 +30,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -38,6 +39,7 @@ public class MainActivity extends AppCompatActivity {
 
     final private Object mSurfaceLock = new Object();
     private SurfaceHolder mSurfaceHolder = null;
+    private AtomicBoolean mCancel = new AtomicBoolean();
     private PendingIntent mPermissionIntent;
 
     private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver() {
@@ -156,19 +158,24 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        runReadThread(parcelFileDescriptor, new ReadThreadCallback() {
+        ThreadCallback callback = new ThreadCallback() {
             @Override
             public void onCompleted(boolean success) {
+                try {
+                    parcelFileDescriptor.close();
+                } catch (IOException e) {}
+
                 if (success) {
                     toast("Connection ended successfully");
                 } else {
                     toast("Connection ended due to IO error");
                 }
-                try {
-                    parcelFileDescriptor.close();
-                } catch (IOException e) {}
             }
-        });
+        };
+
+        mCancel.set(false);
+        runReadThread(parcelFileDescriptor, callback);
+        runWriteThread(parcelFileDescriptor, callback);
     }
 
     private boolean sendHandshake(@NonNull ParcelFileDescriptor parcelFileDescriptor) {
@@ -183,31 +190,21 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void runReadThread(@NonNull ParcelFileDescriptor parcelFileDescriptor,
-                              final ReadThreadCallback callback) {
+                               final ThreadCallback callback) {
         final FileDescriptor fd = parcelFileDescriptor.getFileDescriptor();
         new Thread(null, new Runnable() {
             @Override
             public void run() {
-                byte[] ack = new byte[] { 4, 8, 15, 16 };
                 byte[] buffer = new byte[1024 * 1024]; // Initialize 1 MB at first.
                 Bitmap bitmap;
                 BitmapFactory.Options options = new BitmapFactory.Options();
                 options.inMutable = true;
 
-                try (
-                        InputStream is = new FileInputStream(fd);
-                        OutputStream os = new FileOutputStream(fd);
-                ) {
+                try (InputStream is = new FileInputStream(fd)) {
                     DataInputStream dis = new DataInputStream(is);
-                    DataOutputStream dos = new DataOutputStream(os);
 
-                    int i = 0;
-                    while (true) {
-                        ++i;
-                        if (i % 100 == 0) {
-                            dos.write(ack);
-                        }
-
+                    boolean cancelled = false;
+                    while (!(cancelled = mCancel.get())) {
                         int size = dis.readInt();
                         Log.i("SIZE", "size=" + size);
 
@@ -237,6 +234,16 @@ public class MainActivity extends AppCompatActivity {
                             }
                         }
                     }
+
+                    if (!cancelled) {
+                        // Could break from loop due to size == 0.
+                        MainActivity.this.runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                callback.onCompleted(true);
+                            }
+                        });
+                    }
                 } catch (Exception e) {
                     MainActivity.this.runOnUiThread(new Runnable() {
                         @Override
@@ -246,17 +253,41 @@ public class MainActivity extends AppCompatActivity {
                     });
                 }
 
-                MainActivity.this.runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        callback.onCompleted(true);
-                    }
-                });
+                mCancel.set(true);
             }
         }).start();
     }
 
-    private interface ReadThreadCallback {
+    private void runWriteThread(@NonNull ParcelFileDescriptor parcelFileDescriptor,
+                                final ThreadCallback callback) {
+        final FileDescriptor fd = parcelFileDescriptor.getFileDescriptor();
+        new Thread(null, new Runnable() {
+            @Override
+            public void run() {
+                byte[] ack = new byte[] { 4, 8, 15, 16 };
+
+                try (OutputStream os = new FileOutputStream(fd)) {
+                    DataOutputStream dos = new DataOutputStream(os);
+
+                    while (!mCancel.get()) {
+                        dos.write(ack);
+                        Thread.sleep(1000);
+                    }
+                } catch (Exception e) {
+                    MainActivity.this.runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            callback.onCompleted(false);
+                        }
+                    });
+                }
+
+                mCancel.set(true);
+            }
+        }).start();
+    }
+
+    private interface ThreadCallback {
         void onCompleted(boolean success);
     }
 }
