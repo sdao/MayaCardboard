@@ -7,9 +7,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.hardware.usb.UsbAccessory;
 import android.hardware.usb.UsbManager;
+import android.opengl.GLES20;
 import android.os.ParcelFileDescriptor;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
@@ -18,9 +18,13 @@ import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
+import android.view.View;
 import android.widget.Toast;
+
+import com.google.vrtoolkit.cardboard.CardboardView;
+import com.google.vrtoolkit.cardboard.Eye;
+import com.google.vrtoolkit.cardboard.HeadTransform;
+import com.google.vrtoolkit.cardboard.Viewport;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -32,13 +36,15 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import javax.microedition.khronos.egl.EGLConfig;
+
 public class MainActivity extends AppCompatActivity {
 
     private static final String ACTION_USB_PERMISSION =
             "com.android.example.USB_PERMISSION";
 
-    final private Object mSurfaceLock = new Object();
-    private SurfaceHolder mSurfaceHolder = null;
+    final private Object mBitmapLock = new Object();
+    private Bitmap mFrontBitmap = null;
     private AtomicBoolean mCancel = new AtomicBoolean();
     private PendingIntent mPermissionIntent;
 
@@ -68,26 +74,41 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        SurfaceView surfaceView = (SurfaceView) findViewById(R.id.surface_view);
-        surfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
+        CardboardView cardboardView = (CardboardView) findViewById(R.id.cardboard_view);
+        cardboardView.setRenderer(new CardboardView.StereoRenderer() {
+            ScreenQuad screenQuad = new ScreenQuad(MainActivity.this);
+
             @Override
-            public void surfaceCreated(SurfaceHolder holder) {
-                synchronized (mSurfaceLock) {
-                    mSurfaceHolder = holder;
+            public void onNewFrame(HeadTransform headTransform) {
+                // TODO: send head position to Maya host.
+            }
+
+            @Override
+            public void onDrawEye(Eye eye) {
+                synchronized (mBitmapLock) {
+                    screenQuad.bindBitmap(mFrontBitmap);
                 }
+
+                GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+                screenQuad.draw();
             }
 
             @Override
-            public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+            public void onFinishFrame(Viewport viewport) {}
 
+            @Override
+            public void onSurfaceChanged(int width, int height) {
+                // TODO: send dimensions to Maya host.
             }
 
             @Override
-            public void surfaceDestroyed(SurfaceHolder holder) {
-                synchronized (mSurfaceLock) {
-                    mSurfaceHolder = null;
-                }
+            public void onSurfaceCreated(EGLConfig eglConfig) {
+                screenQuad.setup();
             }
+
+            @Override
+            public void onRendererShutdown() {}
         });
     }
 
@@ -135,6 +156,23 @@ public class MainActivity extends AppCompatActivity {
         unregisterReceiver(mUsbReceiver);
     }
 
+    private void hideSystemUi() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION // hide nav bar
+                | View.SYSTEM_UI_FLAG_FULLSCREEN // hide status bar
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+
+    private void showSystemUi() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+    }
+
     private void toast(String string) {
         Toast.makeText(MainActivity.this, string, Toast.LENGTH_LONG).show();
     }
@@ -170,9 +208,11 @@ public class MainActivity extends AppCompatActivity {
                 } else {
                     toast("Connection ended due to IO error");
                 }
+                showSystemUi();
             }
         };
 
+        hideSystemUi();
         mCancel.set(false);
         runReadThread(parcelFileDescriptor, callback);
         runWriteThread(parcelFileDescriptor, callback);
@@ -196,7 +236,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void run() {
                 byte[] buffer = new byte[1024 * 1024]; // Initialize 1 MB at first.
-                Bitmap bitmap;
+                Bitmap backBitmap = null;
                 BitmapFactory.Options options = new BitmapFactory.Options();
                 options.inMutable = true;
 
@@ -220,18 +260,13 @@ public class MainActivity extends AppCompatActivity {
 
                         dis.readFully(buffer, 0, size);
 
-                        bitmap = BitmapFactory.decodeByteArray(buffer, 0, size, options);
-                        options.inBitmap = bitmap;
+                        backBitmap = BitmapFactory.decodeByteArray(buffer, 0, size, options);
 
-                        synchronized (mSurfaceLock) {
-                            if (mSurfaceHolder != null) {
-                                Canvas canvas = mSurfaceHolder.lockCanvas();
-                                if (canvas != null) {
-                                    canvas.drawARGB(1, 0, 0, 0);
-                                    canvas.drawBitmap(bitmap, 0, 0, null);
-                                    mSurfaceHolder.unlockCanvasAndPost(canvas);
-                                }
-                            }
+                        synchronized (mBitmapLock) {
+                            Bitmap temp = mFrontBitmap;
+                            mFrontBitmap = backBitmap;
+                            backBitmap = temp;
+                            options.inBitmap = temp;
                         }
                     }
 
@@ -251,6 +286,10 @@ public class MainActivity extends AppCompatActivity {
                             callback.onCompleted(false);
                         }
                     });
+                } finally {
+                    if (backBitmap != null) {
+                        backBitmap.recycle();
+                    }
                 }
 
                 mCancel.set(true);
