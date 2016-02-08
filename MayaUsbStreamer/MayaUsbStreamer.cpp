@@ -58,6 +58,7 @@ public:
                                  << (int) data[3] << std::endl;
           }
         }, 4);
+        M3dView::scheduleRefreshAllViews();
       } else {
         cleanup();
         MGlobal::displayError("Handshake error; USB device disconnected");
