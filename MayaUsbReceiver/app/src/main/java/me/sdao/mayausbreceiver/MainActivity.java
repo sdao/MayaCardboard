@@ -43,8 +43,17 @@ public class MainActivity extends AppCompatActivity {
     private static final String ACTION_USB_PERMISSION =
             "com.android.example.USB_PERMISSION";
 
-    final private Object mBitmapLock = new Object();
-    private Bitmap mFrontBitmap = null;
+    private static final int RIGHT_EYE = 0x00000000;
+    private static final int LEFT_EYE  = 0x80000000;
+    private static final int SIZE_MASK = 0x0FFFFFFF;
+    private static final int EYE_MASK  = 0xF0000000;
+
+    final private Object mRightBitmapLock = new Object();
+    private Bitmap mRightBitmap = null;
+
+    final private Object mLeftBitmapLock = new Object();
+    private Bitmap mLeftBitmap = null;
+
     private AtomicBoolean mCancel = new AtomicBoolean();
     private PendingIntent mPermissionIntent;
 
@@ -85,8 +94,14 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onDrawEye(Eye eye) {
-                synchronized (mBitmapLock) {
-                    screenQuad.bindBitmap(mFrontBitmap);
+                if (eye.getType() == Eye.Type.LEFT) {
+                    synchronized (mLeftBitmapLock) {
+                        screenQuad.bindBitmap(mLeftBitmap);
+                    }
+                } else {
+                    synchronized (mRightBitmapLock) {
+                        screenQuad.bindBitmap(mRightBitmap);
+                    }
                 }
 
                 GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -95,7 +110,8 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onFinishFrame(Viewport viewport) {}
+            public void onFinishFrame(Viewport viewport) {
+            }
 
             @Override
             public void onSurfaceChanged(int width, int height) {
@@ -108,7 +124,8 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onRendererShutdown() {}
+            public void onRendererShutdown() {
+            }
         });
     }
 
@@ -159,18 +176,18 @@ public class MainActivity extends AppCompatActivity {
     private void hideSystemUi() {
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION // hide nav bar
-                | View.SYSTEM_UI_FLAG_FULLSCREEN // hide status bar
-                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION // hide nav bar
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN // hide status bar
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
     }
 
     private void showSystemUi() {
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
     }
 
     private void toast(String string) {
@@ -243,15 +260,24 @@ public class MainActivity extends AppCompatActivity {
                 try (InputStream is = new FileInputStream(fd)) {
                     DataInputStream dis = new DataInputStream(is);
 
-                    boolean cancelled = false;
+                    boolean cancelled;
                     while (!(cancelled = mCancel.get())) {
-                        int size = dis.readInt();
+                        int header = dis.readInt();
+
+                        int size = header & SIZE_MASK;
                         Log.i("SIZE", "size=" + size);
 
                         if (size < 0 || size > 1024 * 1024 * 4 /* 4 MB */) {
                             throw new IndexOutOfBoundsException();
                         } else if (size == 0) {
                             break;
+                        }
+
+                        int eye = header & EYE_MASK;
+                        Log.i("EYE", "eye=" + eye);
+
+                        if (eye != LEFT_EYE && eye != RIGHT_EYE) {
+                            throw new IndexOutOfBoundsException();
                         }
 
                         if (buffer.length < size) {
@@ -262,11 +288,20 @@ public class MainActivity extends AppCompatActivity {
 
                         backBitmap = BitmapFactory.decodeByteArray(buffer, 0, size, options);
 
-                        synchronized (mBitmapLock) {
-                            Bitmap temp = mFrontBitmap;
-                            mFrontBitmap = backBitmap;
-                            backBitmap = temp;
-                            options.inBitmap = temp;
+                        if (eye == LEFT_EYE) {
+                            synchronized (mLeftBitmapLock) {
+                                Bitmap temp = mLeftBitmap;
+                                mLeftBitmap = backBitmap;
+                                backBitmap = temp;
+                                options.inBitmap = temp;
+                            }
+                        } else {
+                            synchronized (mRightBitmapLock) {
+                                Bitmap temp = mRightBitmap;
+                                mRightBitmap = backBitmap;
+                                backBitmap = temp;
+                                options.inBitmap = temp;
+                            }
                         }
                     }
 

@@ -49,8 +49,14 @@ struct MayaUsbDeviceId {
 };
 
 class MayaUsbDevice {
+  static constexpr uint32_t RIGHT_EYE    = 0x00000000;
+  static constexpr uint32_t LEFT_EYE     = 0x80000000;
+  static constexpr uint32_t SIZE_MASK    = 0x0FFFFFFF;
+  static constexpr uint32_t EYE_MASK     = 0xF0000000;
+
   static constexpr size_t RGB_IMAGE_SIZE = 1024 * 1024 * 16; // 16 MB.
-  static constexpr size_t BUFFER_LEN = 16384;
+  static constexpr size_t BUFFER_LEN     = 16384;
+  static constexpr size_t MAX_JPEG_SIZE  = SIZE_MASK;
 
   static libusb_context* _usb;
   static tjhandle _jpegCompressor;
@@ -75,6 +81,7 @@ class MayaUsbDevice {
   unsigned char* _rgbImageBuffer;
   unsigned char* _jpegBuffer;
   size_t _jpegBufferSize;
+  uint32_t _jpegBufferEye;
 
   int16_t getControlInt16(uint8_t request);
   void sendControl(uint8_t request);
@@ -96,7 +103,7 @@ public:
   bool beginReadLoop(std::function<void(const unsigned char*)> callback,
       size_t readFrame);
   bool beginSendLoop(std::function<void()> failureCallback);
-  int sendRaster(void* data, MHWRender::MTextureDescription desc);
+  int sendRaster(void* data, MHWRender::MTextureDescription desc, bool left);
   static bool supportsRasterFormat(MHWRender::MRasterFormat format);
 
   static void initUsb();

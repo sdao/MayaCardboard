@@ -340,19 +340,20 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
 
           // Ignore if written or not.
           break;
-        } else {
+        } else if (_jpegBufferSize <= MAX_JPEG_SIZE) {
           int written = 0;
 
-          // Write size of JPEG (32-bit int).
-          uint32_t bytes = _jpegBufferSize;
-          bytes = boost::endian::native_to_big(bytes);
+          // Write size of JPEG (32-bit int) with eye flag.
+          uint32_t header = boost::endian::native_to_big(
+              ((uint32_t) _jpegBufferSize) | _jpegBufferEye);
+
           libusb_bulk_transfer(_hnd,
               _outEndpoint,
-              reinterpret_cast<unsigned char*>(&bytes),
-              4,
+              reinterpret_cast<unsigned char*>(&header),
+              sizeof(header),
               &written,
               500);
-          if (written < 4) {
+          if (written < sizeof(header)) {
             failureCallback();
             break;
           }
@@ -374,6 +375,8 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
               break;
             }
           }
+        } else {
+          // Just skip this frame, but continue the send loop.
         }
 
         // Only reset send flag if successful.
@@ -398,7 +401,8 @@ bool MayaUsbDevice::supportsRasterFormat(MHWRender::MRasterFormat format) {
   }
 }
 
-int MayaUsbDevice::sendRaster(void* data, MHWRender::MTextureDescription desc) {
+int MayaUsbDevice::sendRaster(void* data, MHWRender::MTextureDescription desc,
+    bool left) {
   size_t rgbImageSize = desc.fWidth * desc.fHeight * 3 /* RGB bytes */;
   if (rgbImageSize > RGB_IMAGE_SIZE) {
     return 0;
@@ -431,8 +435,12 @@ int MayaUsbDevice::sendRaster(void* data, MHWRender::MTextureDescription desc) {
           TJSAMP_420,
           80 /* quality 1 to 100 */,
           0);
+
+      _jpegBufferEye = left ? LEFT_EYE : RIGHT_EYE;
+
       _sendReady = true;
       _sendCv.notify_one();
+
       return _jpegBufferSize;
     }
   }
