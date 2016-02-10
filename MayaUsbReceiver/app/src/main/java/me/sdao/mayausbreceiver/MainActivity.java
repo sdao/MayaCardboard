@@ -339,7 +339,12 @@ public class MainActivity extends AppCompatActivity {
         new Thread(null, new Runnable() {
             @Override
             public void run() {
-                byte[] ack = new byte[] { 4, 8, 15, 16 };
+                byte[] ack = new byte[] {
+                        4, 8, 15, 16,
+                        23, 42, 4, 8,
+                        15, 16, 23, 42,
+                        4, 8, 15, 16,
+                };
 
                 try (OutputStream os = new FileOutputStream(fd)) {
                     DataOutputStream dos = new DataOutputStream(os);

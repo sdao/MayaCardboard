@@ -56,9 +56,9 @@ public:
             std::cout << "Ack: " << (int) data[0] << " "
                                  << (int) data[1] << " "
                                  << (int) data[2] << " "
-                                 << (int) data[3] << std::endl;
+                                 << (int) data[3] << " ..." << std::endl;
           }
-        }, 4);
+        }, 16);
         M3dView::scheduleRefreshAllViews();
       } else {
         cleanup();
