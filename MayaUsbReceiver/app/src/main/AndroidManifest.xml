@@ -3,6 +3,7 @@
     package="me.sdao.mayausbreceiver">
 
     <uses-feature android:name="android.hardware.usb.accessory" />
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
     <application
         android:allowBackup="true"

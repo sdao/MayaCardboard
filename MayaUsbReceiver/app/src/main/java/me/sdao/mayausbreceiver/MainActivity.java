@@ -125,6 +125,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onRendererShutdown() {
+                screenQuad.shutdown();
             }
         });
     }
