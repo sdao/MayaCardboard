@@ -9,7 +9,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.hardware.usb.UsbAccessory;
 import android.hardware.usb.UsbManager;
-import android.opengl.GLES30;
+import android.opengl.GLES20;
 import android.os.ParcelFileDescriptor;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
@@ -104,8 +104,8 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
 
-                GLES30.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT);
+                GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
                 screenQuad.draw();
             }
 
