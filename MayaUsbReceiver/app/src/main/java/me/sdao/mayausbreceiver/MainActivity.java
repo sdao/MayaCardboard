@@ -43,16 +43,9 @@ public class MainActivity extends AppCompatActivity {
     private static final String ACTION_USB_PERMISSION =
             "com.android.example.USB_PERMISSION";
 
-    private static final int RIGHT_EYE = 0x00000000;
-    private static final int LEFT_EYE  = 0x80000000;
-    private static final int SIZE_MASK = 0x0FFFFFFF;
-    private static final int EYE_MASK  = 0xF0000000;
-
-    final private Object mRightBitmapLock = new Object();
-    private Bitmap mRightBitmap = null;
-
-    final private Object mLeftBitmapLock = new Object();
-    private Bitmap mLeftBitmap = null;
+    final private Object mBitmapLock = new Object();
+    private Bitmap mBitmap = null;
+    private boolean mBitmapNew = false;
 
     private AtomicBoolean mCancel = new AtomicBoolean();
     private PendingIntent mPermissionIntent;
@@ -94,19 +87,16 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onDrawEye(Eye eye) {
-                if (eye.getType() == Eye.Type.LEFT) {
-                    synchronized (mLeftBitmapLock) {
-                        screenQuad.bindBitmap(mLeftBitmap);
-                    }
-                } else {
-                    synchronized (mRightBitmapLock) {
-                        screenQuad.bindBitmap(mRightBitmap);
+                synchronized (mBitmapLock) {
+                    if (mBitmapNew) {
+                        screenQuad.bindBitmap(mBitmap);
+                        mBitmapNew = false;
                     }
                 }
 
                 GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-                screenQuad.draw();
+                screenQuad.draw(eye.getType() == Eye.Type.LEFT);
             }
 
             @Override
@@ -263,22 +253,13 @@ public class MainActivity extends AppCompatActivity {
 
                     boolean cancelled;
                     while (!(cancelled = mCancel.get())) {
-                        int header = dis.readInt();
-
-                        int size = header & SIZE_MASK;
+                        int size = dis.readInt();
                         Log.i("SIZE", "size=" + size);
 
                         if (size < 0 || size > 1024 * 1024 * 4 /* 4 MB */) {
                             throw new IndexOutOfBoundsException();
                         } else if (size == 0) {
                             break;
-                        }
-
-                        int eye = header & EYE_MASK;
-                        Log.i("EYE", "eye=" + eye);
-
-                        if (eye != LEFT_EYE && eye != RIGHT_EYE) {
-                            throw new IndexOutOfBoundsException();
                         }
 
                         if (buffer.length < size) {
@@ -289,20 +270,12 @@ public class MainActivity extends AppCompatActivity {
 
                         backBitmap = BitmapFactory.decodeByteArray(buffer, 0, size, options);
 
-                        if (eye == LEFT_EYE) {
-                            synchronized (mLeftBitmapLock) {
-                                Bitmap temp = mLeftBitmap;
-                                mLeftBitmap = backBitmap;
-                                backBitmap = temp;
-                                options.inBitmap = temp;
-                            }
-                        } else {
-                            synchronized (mRightBitmapLock) {
-                                Bitmap temp = mRightBitmap;
-                                mRightBitmap = backBitmap;
-                                backBitmap = temp;
-                                options.inBitmap = temp;
-                            }
+                        synchronized (mBitmapLock) {
+                            Bitmap temp = mBitmap;
+                            mBitmap = backBitmap;
+                            mBitmapNew = true;
+                            backBitmap = temp;
+                            options.inBitmap = temp;
                         }
                     }
 

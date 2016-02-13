@@ -28,15 +28,14 @@
 
 #define CALLBACK_NAME "MayaUsbStreamer_PostRender"
 
-#define RENDER_WIDTH 800
-#define RENDER_HEIGHT 600
+#define RENDER_WIDTH 1280
+#define RENDER_HEIGHT 720
 
 class MayaUsbStreamer {
   static int _debugFrameNum;
   static std::shared_ptr<MayaUsbDevice> _usbDevice;
   static std::mutex _usbDeviceMutex;
-  static MString _leftPanel;
-  static MString _rightPanel;
+  static MString _stereoPanel;
 
 public:
   static void createDevice() {
@@ -68,8 +67,7 @@ public:
   }
   static std::shared_ptr<MayaUsbDevice> getDevice() { return _usbDevice; }
   static std::mutex& getMutex() { return _usbDeviceMutex; }
-  static bool registerNotifications(const MString& leftPanel,
-      const MString& rightPanel) {
+  static bool registerNotifications(const MString& stereoPanel) {
     MHWRender::MRenderer *renderer = MHWRender::MRenderer::theRenderer();
     if (renderer) {
       renderer->addNotification(captureCallback,
@@ -77,14 +75,12 @@ public:
         MHWRender::MPassContext::kEndRenderSemantic,
         nullptr);
       renderer->setOutputTargetOverrideSize(RENDER_WIDTH, RENDER_HEIGHT);
-      _leftPanel = leftPanel;
-      _rightPanel = rightPanel;
+      _stereoPanel = stereoPanel;
       return true;
     }
     return false;
   }
-  static const MString getRegisteredLeftPanel() { return _leftPanel; }
-  static const MString getRegisteredRightPanel() { return _rightPanel; }
+  static const MString getRegisteredStereoPanel() { return _stereoPanel; }
   static bool isConnected() { return _usbDevice != nullptr; }
   static void cleanup() {
     MHWRender::MRenderer *renderer = MHWRender::MRenderer::theRenderer();
@@ -104,8 +100,7 @@ public:
 int MayaUsbStreamer::_debugFrameNum(0);
 std::shared_ptr<MayaUsbDevice> MayaUsbStreamer::_usbDevice(nullptr);
 std::mutex MayaUsbStreamer::_usbDeviceMutex;
-MString MayaUsbStreamer::_leftPanel;
-MString MayaUsbStreamer::_rightPanel;
+MString MayaUsbStreamer::_stereoPanel;
 
 class UsbConnectCommand : public MPxCommand {
 public:
@@ -161,8 +156,7 @@ MSyntax UsbConnectCommand::newSyntax() {
   syntax.enableEdit(false);
   syntax.enableQuery(false);
   syntax.addFlag("-id", "-deviceId", MSyntax::kString, MSyntax::kString);
-  syntax.addFlag("-lp", "-leftPanel", MSyntax::kString);
-  syntax.addFlag("-rp", "-rightPanel", MSyntax::kString);
+  syntax.addFlag("-sp", "-stereoPanel", MSyntax::kString);
   return syntax;
 }
 
@@ -186,15 +180,9 @@ MStatus UsbConnectCommand::doIt(const MArgList& args) {
     return MStatus::kFailure;
   }
 
-  MString leftPanel;
-  if (!argData.getFlagArgument("-lp", 0, leftPanel) != MStatus::kSuccess) {
-    MGlobal::displayError("Error getting -lp left panel name");
-    return MStatus::kFailure;
-  }
-
-  MString rightPanel;
-  if (!argData.getFlagArgument("-rp", 0, rightPanel) != MStatus::kSuccess) {
-    MGlobal::displayError("Error getting -rp right panel name");
+  MString stereoPanel;
+  if (!argData.getFlagArgument("-sp", 0, stereoPanel) != MStatus::kSuccess) {
+    MGlobal::displayError("Error getting -sp stereo panel name");
     return MStatus::kFailure;
   }
 
@@ -221,7 +209,7 @@ MStatus UsbConnectCommand::doIt(const MArgList& args) {
     }
 
     MayaUsbStreamer::createDevice();
-    MayaUsbStreamer::registerNotifications(leftPanel, rightPanel);
+    MayaUsbStreamer::registerNotifications(stereoPanel);
 
     MGlobal::displayInfo("USB device connected!");
     return MStatus::kSuccess;
@@ -237,12 +225,7 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
   context.renderingDestination(destName);
   std::cout << _debugFrameNum++ << " " << destName.asChar() << std::endl;
 
-  bool left;
-  if (destName == MayaUsbStreamer::getRegisteredLeftPanel()) {
-    left = true;
-  } else if (destName == MayaUsbStreamer::getRegisteredRightPanel()) {
-    left = false;
-  } else {
+  if (destName != MayaUsbStreamer::getRegisteredStereoPanel()) {
     std::cout << "  -> skip (" << destName << ")" << std::endl;
     return;
   }
@@ -267,9 +250,7 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
         std::lock_guard<std::mutex> lock(MayaUsbStreamer::getMutex());
         if (MayaUsbStreamer::isConnected() &&
             MayaUsbStreamer::getDevice()->isHandshakeComplete()) {
-          written = MayaUsbStreamer::getDevice()->sendRaster(rawData,
-              desc,
-              left);
+          written = MayaUsbStreamer::getDevice()->sendStereo(rawData, desc);
         }
       }
 

@@ -1,4 +1,5 @@
 #include "MayaUsbDevice.h"
+#include "ImageUtils.h"
 #include <boost/endian/conversion.hpp>
 #include <stdexcept>
 #include <sstream>
@@ -340,12 +341,12 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
 
           // Ignore if written or not.
           break;
-        } else if (_jpegBufferSize <= MAX_JPEG_SIZE) {
+        } else {
           int written = 0;
 
-          // Write size of JPEG (32-bit int) with eye flag.
+          // Write size of JPEG (32-bit int).
           uint32_t header = boost::endian::native_to_big(
-              ((uint32_t) _jpegBufferSize) | _jpegBufferEye);
+              (uint32_t) _jpegBufferSize);
 
           libusb_bulk_transfer(_hnd,
               _outEndpoint,
@@ -375,8 +376,6 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
               break;
             }
           }
-        } else {
-          // Just skip this frame, but continue the send loop.
         }
 
         // Only reset send flag if successful.
@@ -401,22 +400,29 @@ bool MayaUsbDevice::supportsRasterFormat(MHWRender::MRasterFormat format) {
   }
 }
 
-int MayaUsbDevice::sendRaster(void* data, MHWRender::MTextureDescription desc,
-    bool left) {
-  size_t rgbImageSize = desc.fWidth * desc.fHeight * 3 /* RGB bytes */;
-  if (rgbImageSize > RGB_IMAGE_SIZE) {
-    return 0;
-  }
-
+int MayaUsbDevice::sendStereo(void* data, MHWRender::MTextureDescription desc) {
+  bool squashedImage;
   switch (desc.fFormat) {
     case MHWRender::kR32G32B32A32_FLOAT:
-      fillBufferRgbaFloat(data, _rgbImageBuffer, rgbImageSize);
+      squashedImage = ImageUtils::decomposeCheckerboardStereoFloat(data,
+          desc.fWidth,
+          desc.fHeight,
+          _rgbImageBuffer,
+          RGB_IMAGE_SIZE);
       break;
     case MHWRender::kR8G8B8A8_UNORM:
-      fillBufferRgbaUchar(data, _rgbImageBuffer, rgbImageSize);
+      squashedImage = ImageUtils::decomposeCheckerboardStereoUchar(data,
+          desc.fWidth,
+          desc.fHeight,
+          _rgbImageBuffer,
+          RGB_IMAGE_SIZE);
       break;
     default:
-      return 0;
+      squashedImage = false;
+  }
+
+  if (!squashedImage) {
+    return 0;
   }
 
   // Convert _rgbImageBuffer to JPEG.
@@ -429,14 +435,12 @@ int MayaUsbDevice::sendRaster(void* data, MHWRender::MTextureDescription desc,
           desc.fWidth,
           0,
           desc.fHeight,
-          TJPF_RGB,
+          TJPF_RGBX,
           &_jpegBuffer,
           &_jpegBufferSize,
           TJSAMP_420,
-          80 /* quality 1 to 100 */,
+          100 /* quality 1 to 100 */,
           0);
-
-      _jpegBufferEye = left ? LEFT_EYE : RIGHT_EYE;
 
       _sendReady = true;
       _sendCv.notify_one();
@@ -447,30 +451,6 @@ int MayaUsbDevice::sendRaster(void* data, MHWRender::MTextureDescription desc,
 
   std::cout << "#" << std::endl;
   return 0;
-}
-
-void MayaUsbDevice::fillBufferRgbaFloat(void* src, unsigned char* dest,
-    size_t destSize) {
-  float* rgbaData = reinterpret_cast<float*>(src);
-  for (int i = 0; i < destSize; ++i) {
-    int pixel = i / 3;
-    int offset = i % 3;
-    int rgbaIndex = pixel * 4 + offset;
-    float val = rgbaData[rgbaIndex];
-    dest[i] = (unsigned char) (val * 255.9999f);
-  }
-}
-
-void MayaUsbDevice::fillBufferRgbaUchar(void* src, unsigned char* dest,
-    size_t destSize) {
-  unsigned char* rgbaData = reinterpret_cast<unsigned char*>(src);
-  for (int i = 0; i < destSize; ++i) {
-    int pixel = i / 3;
-    int offset = i % 3;
-    int rgbaIndex = pixel * 4 + offset;
-    unsigned char val = rgbaData[rgbaIndex];
-    dest[i] = val;
-  }
 }
 
 void MayaUsbDevice::initUsb() {
