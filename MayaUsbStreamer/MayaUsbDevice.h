@@ -75,6 +75,8 @@ class MayaUsbDevice {
   unsigned char* _rgbImageBuffer;
   unsigned char* _jpegBuffer;
   size_t _jpegBufferSize;
+  size_t _jpegBufferWidth;
+  size_t _jpegBufferHeight;
 
   int16_t getControlInt16(uint8_t request);
   void sendControl(uint8_t request);
@@ -92,7 +94,7 @@ public:
   bool beginReadLoop(std::function<void(const unsigned char*)> callback,
       size_t readFrame);
   bool beginSendLoop(std::function<void()> failureCallback);
-  int sendStereo(void* data, MHWRender::MTextureDescription desc);
+  bool sendStereo(void* data, MHWRender::MTextureDescription desc);
   static bool supportsRasterFormat(MHWRender::MRasterFormat format);
 
   static void initUsb();

@@ -242,7 +242,7 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
     colorTexture->textureDescription(desc);
 
     if (MayaUsbDevice::supportsRasterFormat(desc.fFormat)) {
-      int written = 0;
+      bool sent = false;
       int row, slice;
       void* rawData = colorTexture->rawData(row, slice);
 
@@ -250,13 +250,13 @@ void MayaUsbStreamer::captureCallback(MHWRender::MDrawContext &context,
         std::lock_guard<std::mutex> lock(MayaUsbStreamer::getMutex());
         if (MayaUsbStreamer::isConnected() &&
             MayaUsbStreamer::getDevice()->isHandshakeComplete()) {
-          written = MayaUsbStreamer::getDevice()->sendStereo(rawData, desc);
+          sent = MayaUsbStreamer::getDevice()->sendStereo(rawData, desc);
         }
       }
 
       std::cout << "  -> format " << desc.fFormat << std::endl;
       std::cout << "  -> " << desc.fWidth << "x" << desc.fHeight << std::endl;
-      std::cout << "  -> sent " << written << std::endl;
+      std::cout << "  -> sent " << sent << std::endl;
 
       MHWRender::MTexture::freeRawData(rawData);
     } else {

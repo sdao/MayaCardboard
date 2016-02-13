@@ -342,6 +342,18 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
           // Ignore if written or not.
           break;
         } else {
+          tjCompress2(_jpegCompressor,
+              _rgbImageBuffer,
+              _jpegBufferWidth,
+              0,
+              _jpegBufferHeight,
+              TJPF_RGBX,
+              &_jpegBuffer,
+              &_jpegBufferSize,
+              TJSAMP_420,
+              100 /* quality 1 to 100 */,
+              0);
+
           int written = 0;
 
           // Write size of JPEG (32-bit int).
@@ -400,57 +412,45 @@ bool MayaUsbDevice::supportsRasterFormat(MHWRender::MRasterFormat format) {
   }
 }
 
-int MayaUsbDevice::sendStereo(void* data, MHWRender::MTextureDescription desc) {
-  bool squashedImage;
-  switch (desc.fFormat) {
-    case MHWRender::kR32G32B32A32_FLOAT:
-      squashedImage = ImageUtils::decomposeCheckerboardStereoFloat(data,
-          desc.fWidth,
-          desc.fHeight,
-          _rgbImageBuffer,
-          RGB_IMAGE_SIZE);
-      break;
-    case MHWRender::kR8G8B8A8_UNORM:
-      squashedImage = ImageUtils::decomposeCheckerboardStereoUchar(data,
-          desc.fWidth,
-          desc.fHeight,
-          _rgbImageBuffer,
-          RGB_IMAGE_SIZE);
-      break;
-    default:
-      squashedImage = false;
-  }
-
-  if (!squashedImage) {
-    return 0;
-  }
-
-  // Convert _rgbImageBuffer to JPEG.
+bool MayaUsbDevice::sendStereo(void* data,
+    MHWRender::MTextureDescription desc) {
+  // If the send loop is busy, then skip this frame.
   if (_sendMutex.try_lock()) {
     std::lock_guard<std::mutex> lock(_sendMutex, std::adopt_lock);
-    if (!_sendReady) {
-      std::cout << "$" << std::endl;
-      tjCompress2(_jpegCompressor,
-          _rgbImageBuffer,
-          desc.fWidth,
-          0,
-          desc.fHeight,
-          TJPF_RGBX,
-          &_jpegBuffer,
-          &_jpegBufferSize,
-          TJSAMP_420,
-          100 /* quality 1 to 100 */,
-          0);
 
+    if (!_sendReady) {
+      switch (desc.fFormat) {
+        case MHWRender::kR32G32B32A32_FLOAT:
+          ImageUtils::decomposeCheckerboardStereoFloat(data,
+              desc.fWidth,
+              desc.fHeight,
+              _rgbImageBuffer,
+              RGB_IMAGE_SIZE);
+          break;
+        case MHWRender::kR8G8B8A8_UNORM:
+          ImageUtils::decomposeCheckerboardStereoUchar(data,
+              desc.fWidth,
+              desc.fHeight,
+              _rgbImageBuffer,
+              RGB_IMAGE_SIZE);
+          break;
+        default:
+          return false;
+      }
+
+      // Delay JPEG creation until send loop to improve Maya performance.
+      _jpegBufferWidth = desc.fWidth;
+      _jpegBufferHeight = desc.fHeight;
+
+      // Dispatch send loop.
       _sendReady = true;
       _sendCv.notify_one();
 
-      return _jpegBufferSize;
+      return true;
     }
   }
 
-  std::cout << "#" << std::endl;
-  return 0;
+  return false;
 }
 
 void MayaUsbDevice::initUsb() {
