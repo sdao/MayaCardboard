@@ -21,22 +21,13 @@ namespace ImageUtils {
       srcBlock + srcWidth * SRC_COMPS
     };
 
-    unsigned char* lOut[] = { lDest, lDest + srcWidth * DEST_COMPS };
-    unsigned char* rOut[] = { rDest, rDest + srcWidth * DEST_COMPS };
+    lDest[0] = (srcRows[0][0] + srcRows[1][4]) * 127.999f;
+    lDest[1] = (srcRows[0][1] + srcRows[1][5]) * 127.999f;
+    lDest[2] = (srcRows[0][2] + srcRows[1][6]) * 127.999f;
 
-    lOut[0][0] = srcRows[0][0] * 255.999f;
-    lOut[0][1] = srcRows[0][1] * 255.999f;
-    lOut[0][2] = srcRows[0][2] * 255.999f;
-    lOut[1][0] = srcRows[1][4] * 255.999f;
-    lOut[1][1] = srcRows[1][5] * 255.999f;
-    lOut[1][2] = srcRows[1][6] * 255.999f;
-
-    rOut[0][0] = srcRows[0][4] * 255.999f;
-    rOut[0][1] = srcRows[0][5] * 255.999f;
-    rOut[0][2] = srcRows[0][6] * 255.999f;
-    rOut[1][0] = srcRows[1][0] * 255.999f;
-    rOut[1][1] = srcRows[1][1] * 255.999f;
-    rOut[1][2] = srcRows[1][2] * 255.999f;
+    rDest[0] = (srcRows[0][4] + srcRows[1][0]) * 127.999f;
+    rDest[1] = (srcRows[0][5] + srcRows[1][1]) * 127.999f;
+    rDest[2] = (srcRows[0][6] + srcRows[1][2]) * 127.999f;
   }
 
   inline void processBlockUchar(unsigned char* srcBlock,
@@ -46,22 +37,13 @@ namespace ImageUtils {
       srcBlock + srcWidth * SRC_COMPS
     };
 
-    unsigned char* lOut[] = { lDest, lDest + srcWidth * DEST_COMPS };
-    unsigned char* rOut[] = { rDest, rDest + srcWidth * DEST_COMPS };
+    lDest[0] = (srcRows[0][0] + srcRows[1][4]) / 2;
+    lDest[1] = (srcRows[0][1] + srcRows[1][5]) / 2;
+    lDest[2] = (srcRows[0][2] + srcRows[1][6]) / 2;
 
-    lOut[0][0] = srcRows[0][0];
-    lOut[0][1] = srcRows[0][1];
-    lOut[0][2] = srcRows[0][2];
-    lOut[1][0] = srcRows[1][4];
-    lOut[1][1] = srcRows[1][5];
-    lOut[1][2] = srcRows[1][6];
-
-    rOut[0][0] = srcRows[0][4];
-    rOut[0][1] = srcRows[0][5];
-    rOut[0][2] = srcRows[0][6];
-    rOut[1][0] = srcRows[1][0];
-    rOut[1][1] = srcRows[1][1];
-    rOut[1][2] = srcRows[1][2];
+    rDest[0] = (srcRows[0][4] + srcRows[1][0]) / 2;
+    rDest[1] = (srcRows[0][5] + srcRows[1][1]) / 2;
+    rDest[2] = (srcRows[0][6] + srcRows[1][2]) / 2;
   }
 
   template <typename T, ProcessBlockFunc<T> processBlock>
@@ -81,14 +63,14 @@ namespace ImageUtils {
     // Cast buffer to correct format.
     T* srcData = reinterpret_cast<T*>(src);
 
-    // Move in 2x2 blocks through the image.
+    // Move in 2x2 blocks through the source and map to 2x1 blocks.
     for (int row = 0; row < srcHeight; row += 2) {
       for (int col = 0; col < srcWidth; col += 2) {
         T* srcBlock = getPixelPtr<T, SRC_COMPS>(srcData, srcWidth, row, col);
         unsigned char* lDest = getPixelPtr<unsigned char, DEST_COMPS>(
-            dest, srcWidth, row, col / 2);
+            dest, srcWidth, row / 2, col / 2);
         unsigned char* rDest = getPixelPtr<unsigned char, DEST_COMPS>(
-            dest, srcWidth, row, col / 2 + srcWidth / 2);
+            dest, srcWidth, row / 2, col / 2 + srcWidth / 2);
 
         processBlock(srcBlock, srcWidth, col, lDest, rDest);
       }

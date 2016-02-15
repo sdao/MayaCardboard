@@ -440,7 +440,7 @@ bool MayaUsbDevice::sendStereo(void* data,
 
       // Delay JPEG creation until send loop to improve Maya performance.
       _jpegBufferWidth = desc.fWidth;
-      _jpegBufferHeight = desc.fHeight;
+      _jpegBufferHeight = desc.fHeight / 2;
 
       // Dispatch send loop.
       _sendReady = true;

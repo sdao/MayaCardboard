@@ -29,7 +29,7 @@
 #define CALLBACK_NAME "MayaUsbStreamer_PostRender"
 
 #define RENDER_WIDTH 1280
-#define RENDER_HEIGHT 720
+#define RENDER_HEIGHT 1440
 
 class MayaUsbStreamer {
   static int _debugFrameNum;
