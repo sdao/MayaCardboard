@@ -38,7 +38,7 @@ MayaUsbStreamer_MAKEFILE := $(DSTDIR)/Makefile
 #
 
 $(MayaUsbStreamer_OBJECTS): CFLAGS   := $(CFLAGS)   $(MayaUsbStreamer_EXTRA_CFLAGS)
-$(MayaUsbStreamer_OBJECTS): C++FLAGS := $(C++FLAGS) $(MayaUsbStreamerEXTRA_C++FLAGS)
+$(MayaUsbStreamer_OBJECTS): C++FLAGS := $(C++FLAGS) $(MayaUsbStreamer_EXTRA_C++FLAGS)
 $(MayaUsbStreamer_OBJECTS): INCLUDES := $(INCLUDES) $(MayaUsbStreamer_EXTRA_INCLUDES)
 
 depend_MayaUsbStreamer:     INCLUDES := $(INCLUDES) $(MayaUsbStreamer_EXTRA_INCLUDES)
