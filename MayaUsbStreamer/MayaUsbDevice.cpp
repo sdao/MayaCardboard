@@ -95,6 +95,12 @@ MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
   }
 
   libusb_free_config_descriptor(configDesc);
+
+  status = libusb_claim_interface(_hnd, 0);
+  if (status < 0) {
+    libusb_close(_hnd);
+    throw std::runtime_error("Could not claim interface");
+  }
 }
 
 MayaUsbDevice::~MayaUsbDevice() {
@@ -123,6 +129,7 @@ MayaUsbDevice::~MayaUsbDevice() {
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 
+  libusb_release_interface(_hnd, 0);
   libusb_close(_hnd);
 }
 
@@ -246,7 +253,7 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
         std::cout << "Handshake cancelled!" << std::endl;
       } else {
         bool success = read > 0;
-        std::cout << "Received handshake, success=" << success << std::endl;
+        std::cout << "Received handshake, status=" << status << std::endl;
 
         _handshake.store(success);
         callback(success);
@@ -342,6 +349,7 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
           // Ignore if written or not.
           break;
         } else {
+          unsigned long jpegBufferSizeUlong;
           tjCompress2(_jpegCompressor,
               _rgbImageBuffer,
               _jpegBufferWidth,
@@ -349,11 +357,12 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
               _jpegBufferHeight,
               TJPF_RGBX,
               &_jpegBuffer,
-              &_jpegBufferSize,
+              &jpegBufferSizeUlong,
               TJSAMP_420,
               100 /* quality 1 to 100 */,
               0);
 
+          _jpegBufferSize = jpegBufferSizeUlong;
           int written = 0;
 
           // Write size of JPEG (32-bit int).

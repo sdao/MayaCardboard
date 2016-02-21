@@ -1,7 +1,7 @@
 MayaCardboard
 =============
 
-Explore a Maya scene using Google Cardboard. Linux only.
+Explore a Maya scene using Google Cardboard. Linux and Windows, Maya 2016.
 
 This project has two parts: a Maya plugin and an Android client. The Maya
 plugin uses `libusb` to connect to an Android device in accessory mode. It
@@ -10,8 +10,18 @@ streams the frames over USB to the Android device.
 The Android client receives the MJPEG stream from the Maya plugin and displays
 the stream using the Google Cardboard SDK.
 
-You should be able to acquire `libusb` and `libjpeg-turbo` from the package
-manager of your Linux distribution. For reference, I used Fedora 23.
+If you're using Linux, you should be able to acquire `libusb`,
+`libjpeg-turbo`, and the Boost headers from the package manager of your Linux
+distribution. For reference, I used Fedora 23.
+
+If you're on Windows, you can acquire Boost from NuGet. I have prepackaged
+binaries and headers for `libusb` (1.0.20) and `libjpeg-turbo` (1.4.2) for
+Visual Studio users.
+
+### Library licenses ###
+- [libusb](https://github.com/libusb/libusb) is licensed under the LGPL.
+- [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo) is licensed
+  under the IJG, BSD, and zlib licenses.
 
 Maya plugin (`MayaUsbStreamer`)
 -------------------------------
