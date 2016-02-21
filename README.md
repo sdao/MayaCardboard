@@ -36,15 +36,32 @@ The Maya plugin exposes three commands, `usbConnect`, `usbStatus`, and
 - `usbStatus`: returns information about the currently-connected USB device.
 - `usbDisconnect`: stops the stream if a USB device is connected.
 
-Note: you must edit your `udev` rules to allow your device's VID/PID, as well
-as allowing all devices with VID `18d1` (Google's VID), which is used when the
-device is in accessory mode. Use `lsusb` to determine your device's VID/PID.
-
 The stereo panel that you use for the `-sp` parameter must be set to
 "checkerboard" stereo output. The plugin will take the checkerboard-formatted
 image and reconstitute separate left and right images. It then combines the
 two left and right images side-by-side into one single frame to send to the
 Android device.
+
+### Linux setup ###
+You must edit your `udev` rules to allow your device's VID/PID, as well as
+allowing all devices with VID `18d1` (Google's VID), which is used when the
+device is in accessory mode. Use `lsusb` to determine your device's VID/PID.
+
+### Windows setup ###
+You must copy the DLLs in the `MayaUsbStreamer/dll` folder into Maya's
+installation directory or a directory on your `PATH`. I personally have created
+an `ExtraDlls` folder on my hard disk that I have added to my `PATH`, and I
+placed the required DLLs there.
+
+You must also install WinUSB drivers for your phone. I recommend using
+[Zadig](http://zadig.akeo.ie/) to install the drivers. Note that the streaming
+plugin will switch your phone to Android accessory mode, which changes the
+phone's VID/PID, making Windows think it's a different device. Thus, you need
+to run Zadig twice. Run it initially once. Then try to connect to the phone
+using the streaming plugin; the phone will switch to accessory mode but the
+connection will fail. You then need to run Zadig again on the phone in
+accessory mode. You only need to go through this procedure the first time;
+Windows will load the right drivers afterwards.
 
 ### Streaming details! ###
 When the plugin receives the device's handshake, it begins a send loop on a
