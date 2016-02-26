@@ -55,8 +55,7 @@ public class MainActivity extends AppCompatActivity {
             String action = intent.getAction();
             if (ACTION_USB_PERMISSION.equals(action)) {
                 synchronized (this) {
-                    UsbAccessory accessory =
-                            (UsbAccessory) intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
+                    UsbAccessory accessory = intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
 
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                         if (accessory != null) {
@@ -137,7 +136,7 @@ public class MainActivity extends AppCompatActivity {
                             .getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
                     connectAccessory(accessory);
                 } else {
-                    UsbManager manager = getSystemService(UsbManager.class);
+                    UsbManager manager = (UsbManager) getSystemService(Context.USB_SERVICE);
 
                     UsbAccessory[] accessories = manager.getAccessoryList();
                     if (accessories.length == 0) {
@@ -186,7 +185,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void connectAccessory(UsbAccessory accessory) {
-        UsbManager manager = getSystemService(UsbManager.class);
+        UsbManager manager = (UsbManager) getSystemService(Context.USB_SERVICE);
 
         final ParcelFileDescriptor parcelFileDescriptor = manager.openAccessory(accessory);
         if (parcelFileDescriptor == null) {
