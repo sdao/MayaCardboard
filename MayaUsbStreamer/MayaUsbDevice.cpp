@@ -1,6 +1,6 @@
 #include "MayaUsbDevice.h"
 #include "ImageUtils.h"
-#include <boost/endian/conversion.hpp>
+#include "EndianUtils.h"
 #include <stdexcept>
 #include <sstream>
 #include <iostream>
@@ -366,7 +366,7 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
           int written = 0;
 
           // Write size of JPEG (32-bit int).
-          uint32_t header = boost::endian::native_to_big(
+          uint32_t header = EndianUtils::nativeToBig(
               (uint32_t) _jpegBufferSize);
 
           libusb_bulk_transfer(_hnd,

@@ -15,6 +15,7 @@
     <ClCompile Include="MayaUsbStreamer.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="EndianUtils.h" />
     <ClInclude Include="ImageUtils.h" />
     <ClInclude Include="MayaUsbDevice.h" />
   </ItemGroup>

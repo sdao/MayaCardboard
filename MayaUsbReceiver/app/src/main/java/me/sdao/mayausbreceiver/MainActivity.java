@@ -34,6 +34,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.microedition.khronos.egl.EGLConfig;
@@ -46,6 +48,9 @@ public class MainActivity extends AppCompatActivity {
     final private Object mBitmapLock = new Object();
     private Bitmap mBitmap = null;
     private boolean mBitmapNew = false;
+
+    final private Object mRotationLock = new Object();
+    private float[] mRotation = new float[4];
 
     private AtomicBoolean mCancel = new AtomicBoolean();
     private PendingIntent mPermissionIntent;
@@ -69,6 +74,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     };
+    private boolean mReceiverRegistered = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,7 +87,10 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onNewFrame(HeadTransform headTransform) {
-                // TODO: send head position to Maya host.
+                synchronized (mRotationLock) {
+                    headTransform.getQuaternion(mRotation, 0);
+                    mRotationLock.notify();
+                }
             }
 
             @Override
@@ -147,6 +156,7 @@ public class MainActivity extends AppCompatActivity {
                     mPermissionIntent = PendingIntent.getBroadcast(MainActivity.this,
                             0, new Intent(ACTION_USB_PERMISSION), 0);
                     registerReceiver(mUsbReceiver, new IntentFilter(ACTION_USB_PERMISSION));
+                    mReceiverRegistered = true;
 
                     UsbAccessory accessory = accessories[0];
                     manager.requestPermission(accessory, mPermissionIntent);
@@ -160,7 +170,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        unregisterReceiver(mUsbReceiver);
+        if (mReceiverRegistered) {
+            unregisterReceiver(mUsbReceiver);
+            mReceiverRegistered = false;
+        }
     }
 
     private void hideSystemUi() {
@@ -311,19 +324,22 @@ public class MainActivity extends AppCompatActivity {
         new Thread(null, new Runnable() {
             @Override
             public void run() {
-                byte[] ack = new byte[] {
-                        4, 8, 15, 16,
-                        23, 42, 4, 8,
-                        15, 16, 23, 42,
-                        4, 8, 15, 16,
-                };
+                ByteBuffer bytes = ByteBuffer.allocate(Float.SIZE / Byte.SIZE * 4)
+                        .order(ByteOrder.BIG_ENDIAN);
 
                 try (OutputStream os = new FileOutputStream(fd)) {
                     DataOutputStream dos = new DataOutputStream(os);
 
                     while (!mCancel.get()) {
-                        dos.write(ack);
-                        Thread.sleep(1000);
+                        synchronized (mRotationLock) {
+                            mRotationLock.wait();
+                            bytes.position(0);
+                            for (int i = 0; i < 4; ++i) {
+                                bytes.putFloat(mRotation[i]);
+                            }
+                        }
+
+                        dos.write(bytes.array());
                     }
                 } catch (Exception e) {
                     MainActivity.this.runOnUiThread(new Runnable() {

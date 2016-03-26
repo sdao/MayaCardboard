@@ -1,10 +1,12 @@
 #include <maya/MObject.h>
 #include <maya/MPxCommand.h>
 #include <maya/MFnPlugin.h>
+#include <maya/MFnTransform.h>
 #include <maya/MSyntax.h>
 #include <maya/MGlobal.h>
 #include <maya/M3dView.h>
 #include <maya/MString.h>
+#include <maya/MSelectionList.h>
 #include <maya/MViewport2Renderer.h>
 #include <maya/MDrawContext.h>
 #include <maya/MArgDatabase.h>
@@ -15,6 +17,7 @@
 #include <atomic>
 #include <mutex>
 
+#include "EndianUtils.h"
 #include "MayaUsbDevice.h"
 
 /**
@@ -36,6 +39,7 @@ class MayaUsbStreamer {
   static std::shared_ptr<MayaUsbDevice> _usbDevice;
   static std::mutex _usbDeviceMutex;
   static MString _stereoPanel;
+  static MDagPath _headDagPath;
 
 public:
   static void createDevice() {
@@ -43,21 +47,40 @@ public:
     _usbDevice = std::make_shared<MayaUsbDevice>();
     _usbDevice->waitHandshakeAsync([](bool success) {
       if (success) {
-        _usbDevice->beginSendLoop([]{
+        _usbDevice->beginSendLoop([] {
           cleanup();
           MGlobal::displayError("Send error; USB device disconnected");
         });
-        _usbDevice->beginReadLoop([](const unsigned char* data){
+        _usbDevice->beginReadLoop([](const unsigned char* data) {
           if (data == nullptr) {
             cleanup();
             MGlobal::displayError("Receive error; USB device disconnected");
           } else {
-            std::cout << "Ack: " << (int) data[0] << " "
-                                 << (int) data[1] << " "
-                                 << (int) data[2] << " "
-                                 << (int) data[3] << " ..." << std::endl;
+            float floatData[4];
+            std::memcpy(floatData, data, 4 * sizeof(float));
+            for (int i = 0; i < 4; ++i) {
+              floatData[i] = EndianUtils::bigToNativeFloat(floatData[i]);
+            }
+
+            std::cout << "Ack: ";
+            for (int i = 0; i < 4; ++i) {
+              std::cout << floatData[i] << " ";
+            }
+            std::cout << std::endl;
+
+            if (_headDagPath.isValid()) {
+              MStatus status;
+              MFnTransform xform(_headDagPath, &status);
+              if (!status.error()) {
+                xform.setRotationQuaternion(
+                  floatData[0],
+                  floatData[1],
+                  floatData[2],
+                  floatData[3]);
+              }
+            }
           }
-        }, 16);
+        }, 4 * sizeof(float));
         M3dView::scheduleRefreshAllViews();
       } else {
         cleanup();
@@ -67,7 +90,8 @@ public:
   }
   static std::shared_ptr<MayaUsbDevice> getDevice() { return _usbDevice; }
   static std::mutex& getMutex() { return _usbDeviceMutex; }
-  static bool registerNotifications(const MString& stereoPanel) {
+  static bool registerNotifications(const MString& stereoPanel,
+      const MDagPath& headDagPath) {
     MHWRender::MRenderer *renderer = MHWRender::MRenderer::theRenderer();
     if (renderer) {
       renderer->addNotification(captureCallback,
@@ -76,6 +100,7 @@ public:
         nullptr);
       renderer->setOutputTargetOverrideSize(RENDER_WIDTH, RENDER_HEIGHT);
       _stereoPanel = stereoPanel;
+      _headDagPath = headDagPath;
       return true;
     }
     return false;
@@ -101,6 +126,7 @@ int MayaUsbStreamer::_debugFrameNum(0);
 std::shared_ptr<MayaUsbDevice> MayaUsbStreamer::_usbDevice(nullptr);
 std::mutex MayaUsbStreamer::_usbDeviceMutex;
 MString MayaUsbStreamer::_stereoPanel;
+MDagPath MayaUsbStreamer::_headDagPath;
 
 class UsbConnectCommand : public MPxCommand {
 public:
@@ -157,6 +183,7 @@ MSyntax UsbConnectCommand::newSyntax() {
   syntax.enableQuery(false);
   syntax.addFlag("-id", "-deviceId", MSyntax::kString, MSyntax::kString);
   syntax.addFlag("-sp", "-stereoPanel", MSyntax::kString);
+  syntax.addFlag("-h", "-head", MSyntax::kString);
   return syntax;
 }
 
@@ -186,6 +213,20 @@ MStatus UsbConnectCommand::doIt(const MArgList& args) {
     return MStatus::kFailure;
   }
 
+  MString headObjName;
+  if (!argData.getFlagArgument("-h", 0, headObjName) != MStatus::kSuccess) {
+    MGlobal::displayError("Error getting -h head object name");
+    return MStatus::kFailure;
+  }
+  MSelectionList selList;
+  MGlobal::getSelectionListByName(headObjName, selList);
+  if (selList.isEmpty()) {
+    MGlobal::displayError("Head object does not exist");
+    return MStatus::kFailure;
+  }
+  MDagPath headDagPath;
+  selList.getDagPath(0, headDagPath);
+
   int vidInt = std::stoi(vid.asChar(), 0, 16);
   int pidInt = std::stoi(pid.asChar(), 0, 16);
   std::cout << "vid=" << vidInt << ", pid=" << pidInt << std::endl;
@@ -209,7 +250,7 @@ MStatus UsbConnectCommand::doIt(const MArgList& args) {
     }
 
     MayaUsbStreamer::createDevice();
-    MayaUsbStreamer::registerNotifications(stereoPanel);
+    MayaUsbStreamer::registerNotifications(stereoPanel, headDagPath);
 
     MGlobal::displayInfo("USB device connected!");
     return MStatus::kSuccess;
