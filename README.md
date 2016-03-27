@@ -1,6 +1,8 @@
 MayaCardboard
 =============
 
+![Screenshot of Google Cardboard-enabled Android app](screenshot.png)
+
 Explore a Maya scene using Google Cardboard. Linux and Windows, Maya 2016.
 
 This project has two parts: a Maya plugin and an Android client. The Maya
@@ -9,6 +11,10 @@ compresses the contents of a stereo viewport using `libjpeg-turbo` and then
 streams the frames over USB to the Android device.
 The Android client receives the MJPEG stream from the Maya plugin and displays
 the stream using the Google Cardboard SDK.
+
+Using Google Cardboard, the phone sends head-tracking data back to the host
+computer so that the stereo camera rig in Maya rotates with your head position,
+enabling you to look around the scene.
 
 If you're using Linux, you should be able to acquire `libusb`,
 `libjpeg-turbo`, and the Boost headers from the package manager of your Linux
@@ -27,12 +33,15 @@ Maya plugin (`MayaUsbStreamer`)
 -------------------------------
 The Maya plugin exposes three commands, `usbConnect`, `usbStatus`, and
 `usbDisconnect`.
-- `usbConnect`: this command requires two parameters, `-id` and `-sp`. The
-  `-id` parameter must be two strings, representing the USB VID and PID of the
-  connected Android device in hex format, e.g. `-id "22b8" "2e82"` for a Moto G
-  (3rd generation). The `-sp` parameter is the name of a stereo panel, e.g.
-  `-sp StereoPanel` for the default stereo panel.
-  - Example command: `usbConnect -id "22b8" "2e82" -sp StereoPanel`.
+- `usbConnect`: this command requires three parameters, `-id`, `-sp`, and `-h`.
+  The `-id` parameter must be two strings, representing the USB VID and PID of
+  a connected Android device in hex format, e.g. `-id "18d1" "4ee2"` for a
+  Google Nexus 4. The `-sp` parameter is the name of a stereo panel, e.g.
+  `-sp StereoPanel` for the default stereo panel. The `-h` parameter is the
+  name of the scene object that acts as the head, e.g. `-h stereoCamera` to
+  track the rotation of the stereo camera rig.
+  - Example command: `usbConnect -id "22b8" "2e82" -sp StereoPanel
+    -h stereoCamera`
 - `usbStatus`: returns information about the currently-connected USB device.
 - `usbDisconnect`: stops the stream if a USB device is connected.
 
@@ -83,11 +92,21 @@ the right-eye image on the right half. It draws this in OpenGL using a quad
 that displays the left half of the render texture for the left eye and vice
 versa for the right eye.
 
+The client also continually sends back head-tracking data provided by the
+Cardboard SDK. When the host computer receives the head-tracking data, it
+adjusts the stereo camera rig to match.
+
+Troubleshooting
+---------------
+- If the connection drops, check the Maya Output Window for the error details.
+  If the error indicates something like `Status in beginReadLoop=-1`, this
+  means that the physical USB connection failed, probably due to a plug being
+  loose.
+
 TODOS
 -----
 - The render size is currently hardcoded in the plugin as 1280x720, which
   generates a 640x720 image for each eye. (Note that the plugin will ask Maya
   to render viewports at _1280x1440_ in order to produce the correct per-eye
   aspect ratio.)
-- There is no head-tracking yet for rotating the camera in the Maya scene.
 - The stereoscopic camera is not setup using the Cardboard viewer parameters.

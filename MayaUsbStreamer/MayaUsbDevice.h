@@ -82,6 +82,8 @@ class MayaUsbDevice {
   void sendControl(uint8_t request);
   void sendControlString(uint8_t request, uint16_t index, std::string str);
 
+  void flushInputBuffer(unsigned char* buf);
+
 public:
   MayaUsbDevice(uint16_t vid, uint16_t pid);
   MayaUsbDevice(

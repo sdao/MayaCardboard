@@ -55,6 +55,8 @@ public class MainActivity extends AppCompatActivity {
     private AtomicBoolean mCancel = new AtomicBoolean();
     private PendingIntent mPermissionIntent;
 
+    private ParcelFileDescriptor mParcelFileDescriptor;
+
     private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver() {
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
@@ -87,9 +89,10 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onNewFrame(HeadTransform headTransform) {
-                synchronized (mRotationLock) {
-                    headTransform.getQuaternion(mRotation, 0);
-                    mRotationLock.notify();
+                if (!mCancel.get()) {
+                    synchronized (mRotationLock) {
+                        headTransform.getQuaternion(mRotation, 0);
+                    }
                 }
             }
 
@@ -114,6 +117,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onSurfaceChanged(int width, int height) {
                 // TODO: send dimensions to Maya host.
+                // Idea: send through same channel as head tracking but use a NaN.
             }
 
             @Override
@@ -140,27 +144,27 @@ public class MainActivity extends AppCompatActivity {
         // Handle item selection
         switch (item.getItemId()) {
             case R.id.send_handshake:
-                if (getIntent().hasExtra(UsbManager.EXTRA_ACCESSORY)) {
-                    UsbAccessory accessory = getIntent()
-                            .getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
-                    connectAccessory(accessory);
-                } else {
-                    UsbManager manager = (UsbManager) getSystemService(Context.USB_SERVICE);
+                UsbManager manager = (UsbManager) getSystemService(Context.USB_SERVICE);
 
-                    UsbAccessory[] accessories = manager.getAccessoryList();
-                    if (accessories.length == 0) {
-                        toast("No accessories connected");
-                        return true;
-                    }
-
-                    mPermissionIntent = PendingIntent.getBroadcast(MainActivity.this,
-                            0, new Intent(ACTION_USB_PERMISSION), 0);
-                    registerReceiver(mUsbReceiver, new IntentFilter(ACTION_USB_PERMISSION));
-                    mReceiverRegistered = true;
-
-                    UsbAccessory accessory = accessories[0];
-                    manager.requestPermission(accessory, mPermissionIntent);
+                UsbAccessory[] accessories = manager.getAccessoryList();
+                if (accessories == null || accessories.length == 0) {
+                    toast("No accessories connected");
+                    return true;
                 }
+
+                mPermissionIntent = PendingIntent.getBroadcast(MainActivity.this,
+                        0, new Intent(ACTION_USB_PERMISSION), 0);
+                registerReceiver(mUsbReceiver, new IntentFilter(ACTION_USB_PERMISSION));
+                mReceiverRegistered = true;
+
+                UsbAccessory accessory;
+                if (getIntent().hasExtra(UsbManager.EXTRA_ACCESSORY)) {
+                    accessory = getIntent().getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
+                } else {
+                    accessory = accessories[0];
+                }
+
+                manager.requestPermission(accessory, mPermissionIntent);
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
@@ -200,33 +204,38 @@ public class MainActivity extends AppCompatActivity {
     private void connectAccessory(UsbAccessory accessory) {
         UsbManager manager = (UsbManager) getSystemService(Context.USB_SERVICE);
 
-        final ParcelFileDescriptor parcelFileDescriptor = manager.openAccessory(accessory);
-        if (parcelFileDescriptor == null) {
+        mParcelFileDescriptor = manager.openAccessory(accessory);
+        if (mParcelFileDescriptor == null) {
             toast("Error connecting");
             return;
         }
 
-        if (sendHandshake(parcelFileDescriptor)) {
+        if (sendHandshake(mParcelFileDescriptor)) {
             toast("Handshake successful!");
         } else {
             toast("Error in handshake");
             try {
-                parcelFileDescriptor.close();
+                mParcelFileDescriptor.close();
+                mParcelFileDescriptor = null;
             } catch (IOException e) {}
             return;
         }
 
         ThreadCallback callback = new ThreadCallback() {
             @Override
-            public void onCompleted(boolean success) {
+            public void onCompleted(boolean success, Exception e) {
                 try {
-                    parcelFileDescriptor.close();
-                } catch (IOException e) {}
+                    if (mParcelFileDescriptor != null) {
+                        mParcelFileDescriptor.close();
+                        mParcelFileDescriptor = null;
+                    }
+                } catch (IOException f) {}
 
                 if (success) {
                     toast("Connection ended successfully");
                 } else {
                     toast("Connection ended due to IO error");
+                    Log.d("THREADS", "IO error", e);
                 }
                 showSystemUi();
             }
@@ -234,14 +243,17 @@ public class MainActivity extends AppCompatActivity {
 
         hideSystemUi();
         mCancel.set(false);
-        runReadThread(parcelFileDescriptor, callback);
-        runWriteThread(parcelFileDescriptor, callback);
+        runReadThread(mParcelFileDescriptor, callback);
+        runWriteThread(mParcelFileDescriptor, callback);
     }
 
     private boolean sendHandshake(@NonNull ParcelFileDescriptor parcelFileDescriptor) {
         FileDescriptor fd = parcelFileDescriptor.getFileDescriptor();
         try (OutputStream os = new FileOutputStream(fd)) {
             byte[] handshake = new byte[16384];
+            for (int i = 0; i < 16384; ++i) {
+                handshake[i] = (byte) i;
+            }
             os.write(handshake);
             return true;
         } catch (IOException e) {
@@ -296,15 +308,15 @@ public class MainActivity extends AppCompatActivity {
                         MainActivity.this.runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                callback.onCompleted(true);
+                                callback.onCompleted(true, null);
                             }
                         });
                     }
-                } catch (Exception e) {
+                } catch (final Exception e) {
                     MainActivity.this.runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            callback.onCompleted(false);
+                            callback.onCompleted(false, e);
                         }
                     });
                 } finally {
@@ -314,6 +326,7 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 mCancel.set(true);
+                Log.d("THREADS", "End read thread");
             }
         }).start();
     }
@@ -326,36 +339,42 @@ public class MainActivity extends AppCompatActivity {
             public void run() {
                 ByteBuffer bytes = ByteBuffer.allocate(Float.SIZE / Byte.SIZE * 4)
                         .order(ByteOrder.BIG_ENDIAN);
+                bytes.putFloat(0.04f)
+                    .putFloat(0.08f)
+                    .putFloat(0.15f)
+                    .putFloat(0.16f);
 
                 try (OutputStream os = new FileOutputStream(fd)) {
                     DataOutputStream dos = new DataOutputStream(os);
 
                     while (!mCancel.get()) {
+                        dos.write(bytes.array());
+
                         synchronized (mRotationLock) {
-                            mRotationLock.wait();
                             bytes.position(0);
                             for (int i = 0; i < 4; ++i) {
                                 bytes.putFloat(mRotation[i]);
                             }
                         }
 
-                        dos.write(bytes.array());
+                        Thread.sleep(10); // Throttle to 100 fps.
                     }
-                } catch (Exception e) {
+                } catch (final Exception e) {
                     MainActivity.this.runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            callback.onCompleted(false);
+                            callback.onCompleted(false, e);
                         }
                     });
                 }
 
                 mCancel.set(true);
+                Log.d("THREADS", "End write thread");
             }
         }).start();
     }
 
     private interface ThreadCallback {
-        void onCompleted(boolean success);
+        void onCompleted(boolean success, Exception e);
     }
 }

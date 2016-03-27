@@ -55,29 +55,30 @@ public:
           if (data == nullptr) {
             cleanup();
             MGlobal::displayError("Receive error; USB device disconnected");
-          } else {
-            float floatData[4];
-            std::memcpy(floatData, data, 4 * sizeof(float));
-            for (int i = 0; i < 4; ++i) {
-              floatData[i] = EndianUtils::bigToNativeFloat(floatData[i]);
-            }
+            return;
+          }
 
-            std::cout << "Ack: ";
-            for (int i = 0; i < 4; ++i) {
-              std::cout << floatData[i] << " ";
-            }
-            std::cout << std::endl;
+          float floatData[4];
+          std::memcpy(floatData, data, 4 * sizeof(float));
+          for (int i = 0; i < 4; ++i) {
+            floatData[i] = EndianUtils::bigToNativeFloat(floatData[i]);
+          }
 
-            if (_headDagPath.isValid()) {
-              MStatus status;
-              MFnTransform xform(_headDagPath, &status);
-              if (!status.error()) {
-                xform.setRotationQuaternion(
-                  floatData[0],
-                  floatData[1],
-                  floatData[2],
-                  floatData[3]);
-              }
+          std::cout << "Ack: ";
+          for (int i = 0; i < 4; ++i) {
+            std::cout << floatData[i] << " ";
+          }
+          std::cout << std::endl;
+
+          if (_headDagPath.isValid()) {
+            MStatus status;
+            MFnTransform xform(_headDagPath, &status);
+            if (!status.error()) {
+              xform.setRotationQuaternion(
+                floatData[0],
+                floatData[1],
+                floatData[2],
+                floatData[3]);
             }
           }
         }, 4 * sizeof(float));

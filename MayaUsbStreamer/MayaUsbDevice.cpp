@@ -104,11 +104,6 @@ MayaUsbDevice::MayaUsbDevice(std::vector<MayaUsbDeviceId> ids)
 }
 
 MayaUsbDevice::~MayaUsbDevice() {
-  delete[] _rgbImageBuffer;
-  if (_jpegBuffer != nullptr) {
-    tjFree(_jpegBuffer);
-  }
-
   bool receiving = _receiveWorker && !_receiveWorker->isCancelled();
   bool sending = _sendWorker && !_sendWorker->isCancelled();
   bool needDelay = false;
@@ -125,12 +120,32 @@ MayaUsbDevice::~MayaUsbDevice() {
   }
 
   if (needDelay) {
-    // Wait 1s since our send/receive loops check every 500ms for cancel flag.
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    // Wait 2s since our send/receive loops check every 500ms for cancel flag.
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+  }
+
+  delete[] _rgbImageBuffer;
+  if (_jpegBuffer != nullptr) {
+    tjFree(_jpegBuffer);
   }
 
   libusb_release_interface(_hnd, 0);
   libusb_close(_hnd);
+}
+
+void MayaUsbDevice::flushInputBuffer(unsigned char* buf) {
+  if (_inEndpoint != 0) {
+    int status = 0;
+    int read;
+    while (status == 0) {
+      status = libusb_bulk_transfer(_hnd,
+        _inEndpoint,
+        buf,
+        BUFFER_LEN,
+        &read,
+        10);
+    }
+  }
 }
 
 std::string MayaUsbDevice::getDescription() {
@@ -228,12 +243,15 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
   }
 
   if (_handshake.load()) {
+    std::cout << "Handshake previously completed!" << std::endl;
     return false;
   }
 
   _receiveWorker = std::make_shared<InterruptibleThread>(
     [=](const InterruptibleThread::SharedAtomicBool cancel) {
       unsigned char* inputBuffer = new unsigned char[BUFFER_LEN];
+      flushInputBuffer(inputBuffer);
+
       int i = 0;
       int read = 0;
       int status = LIBUSB_ERROR_TIMEOUT;
@@ -247,18 +265,32 @@ bool MayaUsbDevice::waitHandshakeAsync(std::function<void(bool)> callback) {
             &read,
             500);
       }
-      delete[] inputBuffer;
 
       if (cancelled) {
         std::cout << "Handshake cancelled!" << std::endl;
       } else {
-        bool success = read > 0;
+        bool success = true;
+        if (read == BUFFER_LEN) {
+          for (int i = 0; i < BUFFER_LEN; ++i) {
+            unsigned char expected = (unsigned char) i;
+            if (inputBuffer[i] != expected) {
+              std::cout << "Handshake expect=" << (int) expected
+                        << ", receive=" << (int) inputBuffer[i] << std::endl;
+              success = false;
+              break;
+            }
+          }
+        } else {
+          std::cout << "Handshake read=" << read << std::endl;
+          success = false;
+        }
         std::cout << "Received handshake, status=" << status << std::endl;
 
         _handshake.store(success);
         callback(success);
       }
 
+      delete[] inputBuffer;
       cancel->store(true);
     }
   );
@@ -303,6 +335,7 @@ bool MayaUsbDevice::beginReadLoop(
 
       if (!cancelled) {
         // Error if loop ended but not cancelled.
+        std::cout << "Status in beginReadLoop=" << status << std::endl;
         callback(nullptr);
       }
 
@@ -329,28 +362,31 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
   _sendWorker = std::make_shared<InterruptibleThread>(
     [=](const InterruptibleThread::SharedAtomicBool cancel) {
       while (true) {
-        std::unique_lock<std::mutex> lock(_sendMutex);
-        _sendCv.wait(lock, [&]{
-          return _sendReady || cancel->load();
-        });
+        bool error = false;
 
-        if (cancel->load()) {
-          int written = 0;
+        {
+          std::unique_lock<std::mutex> lock(_sendMutex);
+          _sendCv.wait(lock, [&] {
+            return _sendReady || cancel->load();
+          });
 
-          // Write 0 buffer size.
-          uint32_t bytes = 0;
-          libusb_bulk_transfer(_hnd,
+          if (cancel->load()) {
+            int written = 0;
+
+            // Write 0 buffer size.
+            uint32_t bytes = 0;
+            libusb_bulk_transfer(_hnd,
               _outEndpoint,
               reinterpret_cast<unsigned char*>(&bytes),
               4,
               &written,
               500);
 
-          // Ignore if written or not.
-          break;
-        } else {
-          unsigned long jpegBufferSizeUlong;
-          tjCompress2(_jpegCompressor,
+            // Ignore if written or not.
+            break;
+          } else {
+            unsigned long jpegBufferSizeUlong;
+            tjCompress2(_jpegCompressor,
               _rgbImageBuffer,
               _jpegBufferWidth,
               0,
@@ -362,45 +398,51 @@ bool MayaUsbDevice::beginSendLoop(std::function<void()> failureCallback) {
               100 /* quality 1 to 100 */,
               0);
 
-          _jpegBufferSize = jpegBufferSizeUlong;
-          int written = 0;
+            _jpegBufferSize = jpegBufferSizeUlong;
+            int written = 0;
 
-          // Write size of JPEG (32-bit int).
-          uint32_t header = EndianUtils::nativeToBig(
-              (uint32_t) _jpegBufferSize);
+            // Write size of JPEG (32-bit int).
+            uint32_t header = EndianUtils::nativeToBig(
+              (uint32_t)_jpegBufferSize);
 
-          libusb_bulk_transfer(_hnd,
+            libusb_bulk_transfer(_hnd,
               _outEndpoint,
               reinterpret_cast<unsigned char*>(&header),
               sizeof(header),
               &written,
               500);
-          if (written < sizeof(header)) {
-            failureCallback();
-            break;
-          }
+            if (written < sizeof(header)) {
+              error = true;
+            } else {
+              // Write JPEG in BUFFER_LEN chunks.
+              for (int i = 0; i < _jpegBufferSize; i += BUFFER_LEN) {
+                written = 0;
 
-          // Write JPEG in BUFFER_LEN chunks.
-          for (int i = 0; i < _jpegBufferSize; i += BUFFER_LEN) {
-            written = 0;
+                int chunk = std::min(BUFFER_LEN, _jpegBufferSize - i);
+                libusb_bulk_transfer(_hnd,
+                  _outEndpoint,
+                  _jpegBuffer + i,
+                  chunk,
+                  &written,
+                  500);
 
-            int chunk = std::min(BUFFER_LEN, _jpegBufferSize - i);
-            libusb_bulk_transfer(_hnd,
-                _outEndpoint,
-                _jpegBuffer + i,
-                chunk,
-                &written,
-                500);
-
-            if (written < chunk) {
-              failureCallback();
-              break;
+                if (written < chunk) {
+                  error = true;
+                  break;
+                }
+              }
             }
           }
         }
 
-        // Only reset send flag if successful.
-        _sendReady = false;
+        if (error) {
+          // Only signal on a send error.
+          failureCallback();
+          break;
+        } else {
+          // Only reset send flag if successful.
+          _sendReady = false;
+        }
       }
 
       std::cout << "Send loop ended" << std::endl;
